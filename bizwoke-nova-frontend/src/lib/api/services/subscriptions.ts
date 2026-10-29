@@ -1,0 +1,1 @@
+export { subscriptionsService } from './team';
