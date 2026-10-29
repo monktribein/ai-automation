@@ -355,6 +355,21 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [ACTIVE, SUSPENDED, DEACTIVATED] }, reason: { type: string } } } } } }
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' } }
 
+  /api/v1/tenants/{tenantId}/features:
+    parameters: [{ name: tenantId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    patch:
+      tags: [Tenants]
+      summary: Toggle tenant feature entitlements (SUPER_ADMIN)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { ai: { type: boolean }, whatsapp: { type: boolean }, excel: { type: boolean }, publicBooking: { type: boolean }, workflows: { type: boolean } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+  /api/v1/webhooks/aknexus/{secret}:
+    post:
+      tags: [Webhooks]
+      security: []
+      summary: AK Nexus incoming-message webhook (authenticated by the secret path segment)
+      parameters: [{ name: secret, in: path, required: true, schema: { type: string }, description: AK_NEXUS_WEBHOOK_SECRET }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /api/v1/users:
     get:
       tags: [Tenants]

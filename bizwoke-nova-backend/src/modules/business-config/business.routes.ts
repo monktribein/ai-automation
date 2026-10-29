@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { Errors } from '../../common/errors/app-error';
 import { requirePermission } from '../../common/middleware/auth';
 import { validate, valid } from '../../common/middleware/validate';
-import { hhmm, slug, timezone } from '../../common/validation/schemas';
+import rateLimit from 'express-rate-limit';
+import { hhmm, phone, slug, timezone } from '../../common/validation/schemas';
+import { getWhatsAppStatus, sendWhatsAppTest } from '../whatsapp/whatsapp-admin.service';
 import { ok } from '../../common/utils/http';
 import { TenantRepository } from '../../infrastructure/mongodb/tenant-repository';
 import { isDuplicateKeyError } from '../../infrastructure/mongodb/transaction';
@@ -20,6 +22,8 @@ const url = z
   .max(500)
   .refine((u) => /^https:\/\//.test(u), 'Only https URLs are allowed');
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+/** Empty string = use the built-in default text. Placeholders: see MESSAGE_PLACEHOLDERS. */
+const messageText = z.string().trim().max(1000);
 
 const hoursSchema = z
   .array(
@@ -82,6 +86,25 @@ const patchBody = z
       })
       .partial()
       .strict(),
+    notifications: z
+      .object({
+        reminderLeadMinutes: z.number().int().min(0).max(10_080),
+        texts: z
+          .object({
+            appointment_confirmation: messageText,
+            appointment_reminder: messageText,
+            appointment_cancelled: messageText,
+            appointment_rescheduled: messageText,
+          })
+          .partial()
+          .strict(),
+      })
+      .partial()
+      .strict(),
+    whatsappAssistant: z
+      .object({ mode: z.enum(['menu', 'ai', 'off']), welcomeText: z.string().trim().max(500) })
+      .partial()
+      .strict(),
   })
   .partial()
   .strict();
@@ -89,7 +112,8 @@ const patchBody = z
 const slugBody = z.object({ slug }).strict();
 const whatsappBody = z
   .object({
-    phoneNumberId: z.string().regex(/^\d{5,30}$/),
+    // Meta phone number id (digits) or AK Nexus instance id (alphanumeric).
+    phoneNumberId: z.string().regex(/^[A-Za-z0-9_-]{5,64}$/),
     displayNumber: z.string().max(32).optional(),
     enabled: z.boolean(),
     templates: z
@@ -204,6 +228,49 @@ export function businessRouter(): Router {
           throw Errors.conflict('This WhatsApp number is already connected to another business');
         throw err;
       }
+    },
+  );
+
+  r.get(
+    '/integrations/whatsapp/status',
+    requirePermission(PERMISSIONS.INTEGRATIONS_MANAGE),
+    async (req, res) => {
+      ok(req, res, await getWhatsAppStatus(req.tenant!.tenantId));
+    },
+  );
+
+  // Fixed test message only (no caller-supplied text); limited per tenant and audited.
+  const testLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 5,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `wa-test:${req.tenant!.tenantId.toString()}`,
+    handler: (req, res) =>
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Too many test messages, try again in a minute',
+          details: [],
+        },
+        requestId: req.requestId,
+      }),
+  });
+  r.post(
+    '/integrations/whatsapp/test',
+    requirePermission(PERMISSIONS.INTEGRATIONS_MANAGE),
+    testLimiter,
+    validate({ body: z.object({ to: phone }).strict() }),
+    async (req, res) => {
+      const { to } = valid<{ to: string }>(res).body;
+      const result = await sendWhatsAppTest(req.tenant!.tenantId, to);
+      await audit(originFromRequest(req), {
+        action: 'integration.whatsapp_test',
+        resourceType: 'tenantSettings',
+        metadata: { to: `***${result.to.slice(-4)}`, sent: result.sent, dryRun: result.dryRun },
+      });
+      ok(req, res, result);
     },
   );
 

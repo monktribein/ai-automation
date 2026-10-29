@@ -64,7 +64,17 @@ const schema = z
     AI_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
     AI_MAX_TOOL_ITERATIONS: z.coerce.number().int().min(1).max(10).default(5),
-    WHATSAPP_PROVIDER: optionalEnum(['meta']),
+    WHATSAPP_PROVIDER: optionalEnum(['meta', 'aknexus']),
+    /** Master switch: false disables all WhatsApp sending regardless of provider. */
+    WHATSAPP_ENABLED: bool(true),
+    /** true = never call the provider; notifications are recorded as SKIPPED (never as SENT). */
+    WHATSAPP_DRY_RUN: bool(false),
+    AK_NEXUS_API_BASE_URL: z.string().url().default('https://app.aknexus.in/api/v2'),
+    AK_NEXUS_API_TOKEN: optionalString,
+    /** Default AK Nexus WhatsApp instance (used when a webhook payload carries no instance id). */
+    AK_NEXUS_INSTANCE_ID: optionalString,
+    /** Secret path segment for the inbound webhook URL (AK Nexus webhooks are unsigned). */
+    AK_NEXUS_WEBHOOK_SECRET: optionalString,
     WHATSAPP_ACCESS_TOKEN: optionalString,
     WHATSAPP_VERIFY_TOKEN: optionalString,
     WHATSAPP_APP_SECRET: optionalString,
@@ -122,6 +132,10 @@ const schema = z
     if (e.AI_PROVIDER && !e.AI_API_KEY) issue('AI_API_KEY', 'AI_API_KEY is required when AI_PROVIDER is set');
     if (e.AI_PROVIDER === 'openai' && !e.AI_MODEL)
       issue('AI_MODEL', 'AI_MODEL is required for the openai provider');
+    if (e.WHATSAPP_PROVIDER === 'aknexus' && !e.AK_NEXUS_API_TOKEN)
+      issue('AK_NEXUS_API_TOKEN', 'AK_NEXUS_API_TOKEN is required when WHATSAPP_PROVIDER=aknexus');
+    if (e.AK_NEXUS_WEBHOOK_SECRET && e.AK_NEXUS_WEBHOOK_SECRET.length < 24)
+      issue('AK_NEXUS_WEBHOOK_SECRET', 'AK_NEXUS_WEBHOOK_SECRET must be at least 24 characters');
     if (e.AI_BASE_URL && !/^https:\/\//.test(e.AI_BASE_URL) && prodLike)
       issue('AI_BASE_URL', 'AI_BASE_URL must use https');
     if (e.EMAIL_PROVIDER === 'smtp' && (!e.SMTP_URL || !e.EMAIL_FROM)) {

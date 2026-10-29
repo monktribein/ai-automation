@@ -19,7 +19,7 @@ import { subscriptionRouter, usageRouter } from '../modules/subscriptions/subscr
 import { conversationRouter } from '../modules/conversations/conversation.routes';
 import { knowledgeRouter } from '../modules/knowledge-base/knowledge.routes';
 import { aiRouter } from '../modules/ai/ai.routes';
-import { whatsappWebhookRouter } from '../modules/whatsapp/whatsapp.routes';
+import { akNexusWebhookRouter, whatsappWebhookRouter } from '../modules/whatsapp/whatsapp.routes';
 import { workflowRouter } from '../modules/workflows/workflow.routes';
 import { exportRouter, importRouter } from '../modules/imports-exports/import-export.routes';
 
@@ -30,6 +30,7 @@ export function apiRouter(): Router {
   api.use('/auth', authRouter());
   api.use('/public', publicRouter());
   api.use('/webhooks/whatsapp', whatsappWebhookRouter());
+  api.use('/webhooks/aknexus', akNexusWebhookRouter());
 
   // Platform-level groups (authorization handled inside).
   api.use('/tenants', tenantRouter());

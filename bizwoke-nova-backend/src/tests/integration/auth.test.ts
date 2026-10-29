@@ -212,6 +212,31 @@ describe('platform privileges', () => {
   });
 });
 
+describe('tenant feature entitlements', () => {
+  it('only super admins can toggle tenant features', async () => {
+    const root = await createSuperAdmin(app);
+    const t = await createTenant(app);
+    await request(app)
+      .patch(`/api/v1/tenants/${t.tenantId}/features`)
+      .set(auth(t))
+      .send({ ai: true })
+      .expect(403);
+    const r = await request(app)
+      .patch(`/api/v1/tenants/${t.tenantId}/features`)
+      .set(auth(root))
+      .send({ ai: true })
+      .expect(200);
+    expect(r.body.data.ai).toBe(true);
+    await request(app)
+      .patch(`/api/v1/tenants/${t.tenantId}/features`)
+      .set(auth(root))
+      .send({ bogus: true })
+      .expect(422);
+    const biz = await request(app).get('/api/v1/business').set(auth(t)).expect(200);
+    expect(biz.body.data.settings.features.ai).toBe(true);
+  });
+});
+
 describe('account activation and deactivation', () => {
   it('super admins deactivate accounts (sessions revoked) and reactivate them', async () => {
     const root = await createSuperAdmin(app);

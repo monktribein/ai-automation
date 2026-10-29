@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
-import { businessService } from '@/lib/api/services/business';
+import { businessService, type WhatsAppStatus } from '@/lib/api/services/business';
 import { BusinessSettings } from '@/lib/api/types';
 import {
   MessageSquare,
@@ -22,6 +22,7 @@ import {
   Save,
   RefreshCw,
   Lock,
+  Send,
 } from 'lucide-react';
 
 interface WhatsAppTemplate {
@@ -39,14 +40,20 @@ export default function WhatsAppIntegrationPage() {
   const [displayNumber, setDisplayNumber] = useState('');
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
 
+  // Live connection status + test message
+  const [status, setStatus] = useState<WhatsAppStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [testTo, setTestTo] = useState('');
+  const [sendingTest, setSendingTest] = useState(false);
+
   // Add template modal / inline state
   const [newKey, setNewKey] = useState('');
   const [newName, setNewName] = useState('');
   const [newLang, setNewLang] = useState('en_US');
 
   const webhookUrl = typeof window !== 'undefined'
-    ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.yourdomain.com/api/v1'}/webhooks/whatsapp`
-    : 'https://api.yourdomain.com/api/v1/webhooks/whatsapp';
+    ? `${process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.yourdomain.com/api/v1'}/webhooks/aknexus/<AK_NEXUS_WEBHOOK_SECRET>`
+    : 'https://api.yourdomain.com/api/v1/webhooks/aknexus/<AK_NEXUS_WEBHOOK_SECRET>';
 
   const loadData = async () => {
     try {
@@ -67,14 +74,46 @@ export default function WhatsAppIntegrationPage() {
     }
   };
 
+  const loadStatus = async () => {
+    try {
+      setStatusLoading(true);
+      setStatus(await businessService.getWhatsAppStatus());
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to check WhatsApp connection';
+      addToast('error', msg);
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    loadStatus();
   }, []);
+
+  const handleSendTest = async () => {
+    const to = testTo.trim();
+    if (!/^\+?[0-9 ()-]{6,20}$/.test(to)) {
+      addToast('error', 'Enter a phone number with country code, e.g. 919876543210');
+      return;
+    }
+    try {
+      setSendingTest(true);
+      const r = await businessService.sendWhatsAppTest(to);
+      if (r.dryRun) addToast('info', 'Dry run is enabled on the server: the message was not sent');
+      else addToast('success', `Test message sent to +${r.to}. Check the phone.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to send test message';
+      addToast('error', msg);
+    } finally {
+      setSendingTest(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enabled && !phoneNumberId.trim()) {
-      addToast('error', 'Phone Number ID is required when WhatsApp integration is enabled');
+      addToast('error', 'WhatsApp instance ID is required when WhatsApp integration is enabled');
       return;
     }
 
@@ -87,6 +126,7 @@ export default function WhatsAppIntegrationPage() {
         templates,
       });
       addToast('success', 'WhatsApp configuration saved successfully');
+      loadStatus();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to update WhatsApp settings';
       addToast('error', msg);
@@ -123,8 +163,8 @@ export default function WhatsAppIntegrationPage() {
 
   return (
     <DashboardLayout
-      title="WhatsApp Meta Cloud Integration"
-      description="Connect your Meta WhatsApp Business API for AI conversational bots and automated notifications"
+      title="WhatsApp Integration (AK Nexus)"
+      description="Connect your AK Nexus WhatsApp instance for AI conversational bots and automated notifications"
       requiredPermission="integrations:manage"
       actions={
         <Button
@@ -148,28 +188,116 @@ export default function WhatsAppIntegrationPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-base">Meta Cloud API Gateway</h3>
+                <h3 className="font-semibold text-base">AK Nexus WhatsApp Gateway</h3>
                 <Badge variant={enabled ? 'success' : 'default'} className="text-[10px]">
                   {enabled ? 'Active / Configured' : 'Disabled'}
                 </Badge>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                All outbound messages and inbound AI conversation webhooks flow directly through your verified Meta Business Account.
+                All outbound messages and inbound AI conversation webhooks flow through your connected AK Nexus WhatsApp instance.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <a
-              href="https://developers.facebook.com/apps"
+              href="https://app.aknexus.in/api_automation/webhooks"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 hover:bg-white/20 text-white transition-colors"
             >
-              Meta App Dashboard
+              AK Nexus Dashboard
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
         </div>
+
+        {/* Live connection status + test message */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-600" />
+                  Connection &amp; Test Message
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Live status of your WhatsApp instance, checked directly with AK Nexus. Save your settings below first.
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={loadStatus}
+                disabled={statusLoading}
+                className="gap-2 shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
+                Check connection
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {statusLoading && !status ? (
+              <Skeleton className="h-14 w-full rounded-lg" />
+            ) : status ? (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 p-3 rounded-lg border border-slate-200 bg-slate-50/60 text-xs">
+                <div className="flex items-center gap-2">
+                  {status.connection === 'connected' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                  )}
+                  <span className="font-semibold text-slate-800">
+                    {status.connection === 'connected'
+                      ? 'Connected'
+                      : status.connection === 'disconnected'
+                        ? 'Disconnected: reconnect the instance in AK Nexus'
+                        : status.connection === 'instance_not_set'
+                          ? 'No instance ID saved yet'
+                          : status.connection === 'provider_not_configured'
+                            ? 'WhatsApp provider not configured on the server'
+                            : status.connection === 'error'
+                              ? 'Could not reach AK Nexus'
+                              : `Status: ${status.connection}`}
+                  </span>
+                </div>
+                <span className="text-slate-500">
+                  Instance: <span className="font-mono text-slate-700">{status.instanceId ?? '—'}</span>
+                </span>
+                <span className="text-slate-500">
+                  Provider: <span className="text-slate-700">{status.provider ?? 'none'}</span>
+                </span>
+                {status.dryRun && <Badge variant="warning" className="text-[10px]">Dry run: messages are not sent</Badge>}
+                {!status.integrationEnabled && (
+                  <Badge variant="default" className="text-[10px]">Integration disabled</Badge>
+                )}
+                {status.error && <span className="w-full text-red-600">{status.error}</span>}
+              </div>
+            ) : null}
+
+            <div className="flex flex-col md:flex-row md:items-end gap-3">
+              <div className="flex-1">
+                <Input
+                  label="Send a test message to"
+                  placeholder="e.g. 919876543210"
+                  value={testTo}
+                  onChange={(e) => setTestTo(e.target.value)}
+                  helperText="Phone number with country code. Sends one fixed test message from your business number."
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={handleSendTest}
+                disabled={sendingTest || !status?.integrationEnabled}
+                className="gap-2 md:mb-6"
+              >
+                <Send className="w-4 h-4" />
+                {sendingTest ? 'Sending…' : 'Send test message'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {loading ? (
           <div className="space-y-4">
@@ -188,7 +316,7 @@ export default function WhatsAppIntegrationPage() {
                       Phone Number Configuration
                     </CardTitle>
                     <CardDescription className="text-xs">
-                      Provide your verified Meta Phone Number ID and optional display sender number.
+                      Provide your AK Nexus WhatsApp instance ID (AK Nexus → API &amp; Automation → WhatsApp Instances) and optional display sender number.
                     </CardDescription>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -205,12 +333,12 @@ export default function WhatsAppIntegrationPage() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
-                    label="Phone Number ID"
+                    label="WhatsApp Instance ID"
                     required={enabled}
-                    placeholder="e.g. 104829104928172"
+                    placeholder="e.g. 6ADC3724DD691"
                     value={phoneNumberId}
                     onChange={(e) => setPhoneNumberId(e.target.value)}
-                    helperText="Located inside WhatsApp > API Setup in Meta Developer Dashboard"
+                    helperText="e.g. 6ADC3724DD691 — the connected instance shown in AK Nexus"
                   />
                   <Input
                     label="Display Number (Optional)"
@@ -224,7 +352,7 @@ export default function WhatsAppIntegrationPage() {
                 <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-lg flex items-start gap-2.5">
                   <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div className="text-xs text-amber-800">
-                    <span className="font-semibold">Security & Access Tokens:</span> Permanent System User Access Tokens and Meta App Secret verification tokens are encrypted and managed exclusively via backend environment variables (<code className="font-mono bg-amber-100/80 px-1 py-0.5 rounded text-[11px]">WHATSAPP_ACCESS_TOKEN</code>) to protect your Meta Business account from browser exposure.
+                    <span className="font-semibold">Security & Access Tokens:</span> The AK Nexus API token and webhook secret live only in backend environment variables (<code className="font-mono bg-amber-100/80 px-1 py-0.5 rounded text-[11px]">AK_NEXUS_API_TOKEN</code>, <code className="font-mono bg-amber-100/80 px-1 py-0.5 rounded text-[11px]">AK_NEXUS_WEBHOOK_SECRET</code>) and are never sent to the browser.
                   </div>
                 </div>
               </CardContent>
@@ -235,7 +363,7 @@ export default function WhatsAppIntegrationPage() {
               <CardHeader>
                 <CardTitle className="text-base">Pre-Approved Notification Templates</CardTitle>
                 <CardDescription className="text-xs">
-                  Map system events to Meta-approved template names for automated customer alerts outside the 24h conversation window.
+                  Optional. Only needed with the Meta Cloud API provider; with AK Nexus, notifications are sent as text automatically.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -323,10 +451,10 @@ export default function WhatsAppIntegrationPage() {
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Meta Webhook Endpoint
+                  AK Nexus Webhook Endpoint
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Configure this webhook URL in your Meta App WhatsApp configuration to enable real-time message receiving and automated AI bot responses.
+                  In AK Nexus → API &amp; Automation → Webhooks → Create Webhook, paste this URL (replace the placeholder with the backend AK_NEXUS_WEBHOOK_SECRET value) to receive incoming messages and enable AI replies.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -362,7 +490,7 @@ export default function WhatsAppIntegrationPage() {
                   <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg space-y-1">
                     <span className="font-semibold text-slate-800">Webhook Fields Required</span>
                     <p className="text-[11px] text-slate-500">
-                      Subscribe to <strong className="text-slate-700">messages</strong> and <strong className="text-slate-700">message_deliveries</strong> in Meta Developer App.
+                      Select the <strong className="text-slate-700">new message</strong> (incoming message) event in AK Nexus.
                     </p>
                   </div>
                 </div>

@@ -49,10 +49,20 @@ export const staffService = {
 
   // Staff Availability
   async getAvailability(staffId: string) {
-    const res = await apiClient<{ weekly: StaffAvailability['weekly']; breaks: StaffAvailability['breaks']; exceptions: AvailabilityException[] }>(
-      `/staff/${staffId}/availability`
-    );
-    return res.data;
+    // Backend shape: { schedule: { weekly, breaks } | null, followsBusinessHours, exceptions }.
+    // `schedule` is null until a custom schedule is saved (business hours apply meanwhile).
+    const res = await apiClient<{
+      schedule: Partial<StaffAvailability> | null;
+      followsBusinessHours: boolean;
+      exceptions: AvailabilityException[];
+    }>(`/staff/${staffId}/availability`);
+    const d = res.data;
+    return {
+      weekly: d?.schedule?.weekly ?? [],
+      breaks: d?.schedule?.breaks ?? [],
+      followsBusinessHours: d?.followsBusinessHours ?? true,
+      exceptions: d?.exceptions ?? [],
+    };
   },
 
   async setAvailability(staffId: string, availability: StaffAvailability) {

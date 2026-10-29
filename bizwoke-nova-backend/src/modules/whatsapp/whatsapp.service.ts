@@ -20,6 +20,10 @@ import { requestHandoff } from '../conversations/handoff';
 import { handleCustomerMessage } from '../ai/ai.service';
 import { applyDeliveryStatus, queueNotification } from '../notifications/notification.service';
 import { WebhookEventModel } from './webhook-event.model';
+import { parseAkNexusWebhook } from './aknexus-webhook';
+import { contactAddress } from './address';
+import { handleMenuMessage } from './whatsapp-bot.service';
+import { env } from '../../config/env';
 
 const RETENTION_DAYS = 30;
 const OPT_OUT = /^\s*(stop|unsubscribe|opt[\s-]?out)\s*$/i;
@@ -81,11 +85,15 @@ const payloadSchema = z.object({
 });
 
 /** Stores the raw webhook once (dedup by content hash) and enqueues async processing. */
-export async function receiveWebhook(rawBody: Buffer, payload: unknown): Promise<{ duplicate: boolean }> {
+export async function receiveWebhook(
+  rawBody: Buffer,
+  payload: unknown,
+  provider: 'whatsapp' | 'aknexus' = 'whatsapp',
+): Promise<{ duplicate: boolean }> {
   const eventKey = sha256(rawBody.toString('utf8'));
   try {
     const ev = await WebhookEventModel.create({
-      provider: 'whatsapp',
+      provider,
       eventKey,
       payload,
       expiresAt: new Date(Date.now() + RETENTION_DAYS * 86_400_000),
@@ -125,7 +133,7 @@ async function findOrOpenSession(tenantId: Types.ObjectId, waId: string, name?: 
     status: { $in: ['OPEN', 'HANDOFF'] },
   });
   if (existing) return existing;
-  const phone = normalizePhone(`+${waId}`);
+  const phone = normalizePhone(contactAddress(waId));
   const customer = await new TenantRepository<CustomerDoc>(CustomerModel, tenantId).findOne({
     phoneNormalized: phone,
     status: 'ACTIVE',
@@ -153,7 +161,7 @@ async function findOrOpenSession(tenantId: Types.ObjectId, waId: string, name?: 
 
 async function setWhatsAppConsent(tenantId: Types.ObjectId, waId: string, value: boolean) {
   await new TenantRepository(CustomerModel, tenantId).updateMany(
-    { phoneNormalized: normalizePhone(`+${waId}`) },
+    { phoneNormalized: normalizePhone(contactAddress(waId)) },
     { $set: { 'consent.whatsapp': value, 'consent.updatedAt': new Date() } },
   );
 }
@@ -178,7 +186,7 @@ async function processInboundMessage(
   const reply = (body: string) =>
     queueNotification(tenantId, {
       channel: 'WHATSAPP',
-      to: `+${msg.from}`,
+      to: contactAddress(msg.from),
       templateKey: 'free_text',
       data: { text: body },
       dedupeKey: `wa-reply:${msg.id}`,
@@ -196,10 +204,42 @@ async function processInboundMessage(
   }
   if (OPT_IN.test(text)) await setWhatsAppConsent(tenantId, msg.from, true);
 
+  const settings = await new TenantRepository(TenantSettingsModel, tenantId).findOne({});
+  const mode = settings?.whatsappAssistant?.mode ?? 'menu';
+  if (mode !== 'ai') {
+    const messages = new TenantRepository(ConversationMessageModel, tenantId);
+    await messages.create({ sessionId: session._id, role: 'user', text, externalMessageId: msg.id });
+    await new TenantRepository(ConversationSessionModel, tenantId).updateOne(
+      { _id: session._id },
+      { $set: { lastMessageAt: new Date() } },
+    );
+    // 'off' = team answers from the inbox; HANDOFF = a person has taken over, the bot stays silent.
+    if (mode === 'off' || session.status === 'HANDOFF') return;
+    const replies = await handleMenuMessage({
+      tenant: systemContext(tenant, 'system'),
+      session,
+      text,
+      phoneDigits: msg.from,
+      contactName,
+      messageId: msg.id,
+    });
+    for (const [i, body] of replies.entries()) {
+      await messages.create({ sessionId: session._id, role: 'assistant', text: body });
+      await queueNotification(tenantId, {
+        channel: 'WHATSAPP',
+        to: contactAddress(msg.from),
+        templateKey: 'free_text',
+        data: { text: body },
+        dedupeKey: `wa-reply:${msg.id}:${i}`,
+      });
+    }
+    return;
+  }
+
   try {
     const result = await handleCustomerMessage(systemContext(tenant, 'ai'), session._id, text, {
       externalMessageId: msg.id,
-      channelPhone: `+${msg.from}`,
+      channelPhone: contactAddress(msg.from),
     });
     if (result.reply) await reply(result.reply);
   } catch (err) {
@@ -226,6 +266,7 @@ export async function processWebhookEvent(webhookEventId: string): Promise<void>
     { new: true },
   ).lean();
   if (!ev) return;
+  if (ev.provider === 'aknexus') return processAkNexusEvent(ev._id, ev.payload, ev.eventKey);
   const parsed = payloadSchema.safeParse(ev.payload);
   if (!parsed.success || parsed.data.object !== 'whatsapp_business_account') {
     await WebhookEventModel.updateOne(
@@ -270,6 +311,57 @@ export async function processWebhookEvent(webhookEventId: string): Promise<void>
   } catch (err) {
     await WebhookEventModel.updateOne(
       { _id: ev._id },
+      { $set: { status: 'FAILED', error: (err as Error).message?.slice(0, 500) } },
+    );
+    throw err;
+  }
+}
+
+/** Inbound AK Nexus events: tenant resolved from the instance id (payload, else AK_NEXUS_INSTANCE_ID). */
+async function processAkNexusEvent(eventId: Types.ObjectId, payload: unknown, eventKey: string) {
+  const parsed = parseAkNexusWebhook(payload);
+  if (parsed.messages.length === 0) {
+    // Kept (30 days) for inspection: lets the payload format be confirmed against real deliveries.
+    await WebhookEventModel.updateOne(
+      { _id: eventId },
+      {
+        $set: {
+          status: 'IGNORED',
+          processedAt: new Date(),
+          error: `No inbound text message found (event: ${parsed.event ?? 'unknown'})`,
+        },
+      },
+    );
+    return;
+  }
+  try {
+    let tenantId: Types.ObjectId | undefined;
+    for (const [i, m] of parsed.messages.entries()) {
+      const instanceId = m.instanceId ?? env().AK_NEXUS_INSTANCE_ID;
+      const tenant = instanceId ? await resolveTenantByPhoneNumberId(instanceId) : null;
+      if (!tenant) {
+        logger.warn({ instanceId }, 'AK Nexus webhook for an instance not linked to an active tenant');
+        continue;
+      }
+      tenantId = tenant._id;
+      await processInboundMessage(
+        tenant,
+        {
+          id: m.messageId ?? `aknexus:${eventKey.slice(0, 40)}:${i}`,
+          from: m.from,
+          type: 'text',
+          text: { body: m.text },
+        },
+        m.name,
+      );
+    }
+    await WebhookEventModel.updateOne(
+      { _id: eventId },
+      { $set: { status: tenantId ? 'PROCESSED' : 'IGNORED', tenantId, processedAt: new Date() } },
+    );
+  } catch (err) {
+    await WebhookEventModel.updateOne(
+      { _id: eventId },
       { $set: { status: 'FAILED', error: (err as Error).message?.slice(0, 500) } },
     );
     throw err;

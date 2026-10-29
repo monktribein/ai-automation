@@ -14,8 +14,16 @@ export function integrationStatus() {
       ? {
           status: 'configured',
           provider: getWhatsAppProvider()!.name,
-          webhookVerification: Boolean(e.WHATSAPP_VERIFY_TOKEN),
-          signatureValidation: Boolean(e.WHATSAPP_APP_SECRET),
+          dryRun: e.WHATSAPP_DRY_RUN,
+          ...(getWhatsAppProvider()!.name === 'aknexus'
+            ? {
+                inboundWebhook: Boolean(e.AK_NEXUS_WEBHOOK_SECRET),
+                defaultInstance: Boolean(e.AK_NEXUS_INSTANCE_ID),
+              }
+            : {
+                webhookVerification: Boolean(e.WHATSAPP_VERIFY_TOKEN),
+                signatureValidation: Boolean(e.WHATSAPP_APP_SECRET),
+              }),
         }
       : { status: 'unavailable' },
     email: getEmailProvider()

@@ -1,26 +1,37 @@
+import { DateTime } from 'luxon';
 import { Types } from 'mongoose';
 import { events } from '../../common/utils/events';
 import { TenantRepository } from '../../infrastructure/mongodb/tenant-repository';
 import { AppointmentModel, type AppointmentDoc } from '../appointments/appointment.models';
 import { CustomerModel, type CustomerDoc } from '../customers/customer.models';
 import { ServiceModel } from '../services/service.model';
+import { StaffModel } from '../staff/staff.models';
 import { TenantSettingsModel } from '../business-config/tenant-settings.model';
 import type { TemplateKey } from './notification.model';
 import { cancelPendingNotifications, formatWhen, queueNotification } from './notification.service';
 
-const REMINDER_LEAD_MS = 24 * 3_600_000;
+const DEFAULT_REMINDER_LEAD_MINUTES = 1440;
 
 async function load(tenantIdStr: string, appointmentId: string) {
   const tenantId = new Types.ObjectId(tenantIdStr);
   const appt = await new TenantRepository<AppointmentDoc>(AppointmentModel, tenantId).findById(appointmentId);
   if (!appt) return null;
-  const [customer, service, settings] = await Promise.all([
+  const [customer, service, settings, staff] = await Promise.all([
     new TenantRepository<CustomerDoc>(CustomerModel, tenantId).findById(appt.customerId),
     new TenantRepository(ServiceModel, tenantId).findById(appt.serviceId),
     new TenantRepository(TenantSettingsModel, tenantId).findOne({}),
+    new TenantRepository(StaffModel, tenantId).findById(appt.staffId),
   ]);
   if (!customer || customer.status !== 'ACTIVE') return null;
-  return { tenantId, appt, customer, serviceName: service?.name ?? '', locale: settings?.locale ?? 'en' };
+  return {
+    tenantId,
+    appt,
+    customer,
+    serviceName: service?.name ?? '',
+    staffName: staff?.name ?? '',
+    locale: settings?.locale ?? 'en',
+    reminderLeadMinutes: settings?.notifications?.reminderLeadMinutes ?? DEFAULT_REMINDER_LEAD_MINUTES,
+  };
 }
 
 /** Transactional messages: email when available; WhatsApp only with explicit opt-in. */
@@ -30,7 +41,11 @@ async function notifyCustomer(
   opts: { scheduledFor?: Date; dedupe: string },
 ) {
   const { tenantId, appt, customer } = ctx;
+  const local = DateTime.fromJSDate(appt.startAt, { zone: appt.timezone }).setLocale(ctx.locale);
   const data = {
+    staffName: ctx.staffName,
+    date: local.toFormat('ccc d LLL yyyy'),
+    time: local.toFormat('h:mm a'),
     customerName: customer.name,
     serviceName: ctx.serviceName,
     reference: appt.reference,
@@ -62,7 +77,8 @@ async function notifyCustomer(
 }
 
 async function scheduleReminder(ctx: NonNullable<Awaited<ReturnType<typeof load>>>) {
-  const at = new Date(ctx.appt.startAt.getTime() - REMINDER_LEAD_MS);
+  if (ctx.reminderLeadMinutes <= 0) return; // reminders disabled by the business
+  const at = new Date(ctx.appt.startAt.getTime() - ctx.reminderLeadMinutes * 60_000);
   if (at.getTime() <= Date.now()) return;
   await notifyCustomer(ctx, 'appointment_reminder', {
     scheduledFor: at,

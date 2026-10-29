@@ -20,7 +20,10 @@
     "test:watch": "vitest",
     "db:indexes": "tsx scripts/sync-indexes.ts",
     "db:seed-admin": "tsx scripts/create-super-admin.ts",
-    "audit:deps": "npm audit --omit=dev"
+    "audit:deps": "npm audit --omit=dev",
+    "db:local": "tsx scripts/local-mongo.ts",
+    "whatsapp:check": "tsx scripts/whatsapp-check.ts",
+    "webhook:url": "tsx scripts/webhook-url.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1159.0",

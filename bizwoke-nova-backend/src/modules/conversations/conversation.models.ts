@@ -15,6 +15,8 @@ export interface ConversationSessionDoc {
   lastMessageAt: Date;
   /** Bound to a single appointment the AI created/looked up, so later tool calls stay within it. */
   linkedAppointmentIds: Types.ObjectId[];
+  /** Menu-bot progress (step + choices offered), reset after inactivity. */
+  bot?: { step: string; data: Record<string, unknown>; updatedAt: Date };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,6 +31,7 @@ const sessionSchema = tenantSchema<ConversationSessionDoc>({
   handoff: { reason: String, at: Date, assignedMembershipId: Schema.Types.ObjectId },
   lastMessageAt: { type: Date, default: () => new Date() },
   linkedAppointmentIds: { type: [Schema.Types.ObjectId], default: [] },
+  bot: { step: String, data: { type: Schema.Types.Mixed, default: {} }, updatedAt: Date },
 });
 sessionSchema.index({ tenantId: 1, status: 1, lastMessageAt: -1 });
 sessionSchema.index(

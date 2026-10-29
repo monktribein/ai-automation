@@ -52,6 +52,24 @@ WhatsApp message id; tenant resolved from `phone_number_id`; `STOP`/`START` keyw
 free-text replies are sent only in response to inbound messages (24h window). Outbound status: `SENT` means
 **accepted by the API**; `DELIVERED`/`READ`/`FAILED` are set only from provider status webhooks.
 
+## WhatsApp via AK Nexus (`WHATSAPP_PROVIDER=aknexus`)
+
+AK Nexus API v2 (`https://app.aknexus.in/api/v2`, `Authorization: Bearer wz_...`, 60 requests/min).
+
+* **Outbound:** `POST /whatsapp/send/text { instance_id, to, message }`. Every notification (confirmation,
+  reminder, cancellation, AI reply, agent reply) is sent as rendered text; no Meta template mapping is needed.
+  The tenant's WhatsApp setting holds the **AK Nexus instance id** (e.g. `6ADC3724DD691`).
+  The API returns `{ status: "success", data: { sent: true } }` without a message id, so the notification stores a local
+  reference (`aknexus-<uuid>`) and stays `SENT` (accepted). **Delivery/read receipts are not available.**
+* **Inbound:** create a webhook in AK Nexus (API & Automation → Webhooks) pointing to
+  `{API}/webhooks/aknexus/<AK_NEXUS_WEBHOOK_SECRET>`. AK Nexus does not sign requests, so the secret in the URL is the
+  authentication (constant-time comparison, 401 otherwise). Bodies are stored once (SHA-256 dedupe), then parsed by a
+  tolerant parser (`modules/whatsapp/aknexus-webhook.ts`). The tenant is resolved from the payload's instance id, else
+  `AK_NEXUS_INSTANCE_ID`. Payloads that contain no inbound text are kept as `IGNORED` (30 days) with the reason, so the
+  format can be checked in `webhookEvents`.
+* `WHATSAPP_DRY_RUN=true` never calls AK Nexus; notifications are recorded as `SKIPPED`. `WHATSAPP_ENABLED=false` disables WhatsApp.
+* `npm run whatsapp:check` verifies token, account and instance status (read-only); `-- --send-to=<number>` sends one test message.
+
 ## Email (`infrastructure/email/email.provider.ts`)
 
 `EMAIL_PROVIDER=smtp`, `SMTP_URL` (e.g. `smtps://user:pass@smtp.example.com:465`), `EMAIL_FROM`. Used for password

@@ -167,9 +167,18 @@ export interface AiSettings {
   enabled: boolean;
   maxTurns: number;
   instructions: string;
-  model: string;
+  /** Optional model override; omit to use the server default (AI_MODEL). */
+  model?: string;
   handoffMessage: string;
 }
+
+export type MessageTextKey =
+  | 'appointment_confirmation'
+  | 'appointment_reminder'
+  | 'appointment_cancelled'
+  | 'appointment_rescheduled';
+
+export type WhatsAppAssistantMode = 'menu' | 'ai' | 'off';
 
 export interface BusinessSettings {
   _id?: string;
@@ -182,6 +191,11 @@ export interface BusinessSettings {
   operatingHours: OperatingHour[];
   bookingPolicy: BookingPolicy;
   ai: AiSettings;
+  notifications?: {
+    reminderLeadMinutes?: number;
+    texts?: Partial<Record<MessageTextKey, string>>;
+  };
+  whatsappAssistant?: { mode?: WhatsAppAssistantMode; welcomeText?: string };
   features?: {
     publicBooking?: boolean;
     whatsapp?: boolean;

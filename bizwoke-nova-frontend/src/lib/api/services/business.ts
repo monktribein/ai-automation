@@ -1,6 +1,26 @@
 import { apiClient } from '../client';
 import { BusinessSettings, Tenant, PlanLimits, AvailabilityException } from '../types';
 
+export interface WhatsAppStatus {
+  provider: string | null;
+  whatsappEnabled: boolean;
+  dryRun: boolean;
+  integrationEnabled: boolean;
+  instanceId: string | null;
+  displayNumber: string | null;
+  /** connected | disconnected | error | instance_not_set | provider_not_configured | unknown | ... */
+  connection: string;
+  error?: string;
+  checkedAt: string;
+}
+
+export interface WhatsAppTestResult {
+  sent: boolean;
+  dryRun: boolean;
+  to: string;
+  reference?: string;
+}
+
 export interface BusinessData {
   tenant: Tenant;
   settings: BusinessSettings;
@@ -38,6 +58,21 @@ export const businessService = {
     const res = await apiClient<BusinessSettings['integrations']>('/business/integrations/whatsapp', {
       method: 'PUT',
       body,
+    });
+    return res.data;
+  },
+
+  /** Live WhatsApp connection state (read-only check against the provider). */
+  async getWhatsAppStatus() {
+    const res = await apiClient<WhatsAppStatus>('/business/integrations/whatsapp/status');
+    return res.data;
+  },
+
+  /** Sends one fixed test message to `to` from the business's WhatsApp instance. */
+  async sendWhatsAppTest(to: string) {
+    const res = await apiClient<WhatsAppTestResult>('/business/integrations/whatsapp/test', {
+      method: 'POST',
+      body: { to },
     });
     return res.data;
   },

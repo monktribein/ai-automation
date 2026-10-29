@@ -14,6 +14,16 @@ These are deliberate scope gaps or items not verified in this repository.
 | BullMQ + Redis | Queue/worker code is implemented but tests run the inline queue. The standalone worker and repeatable jobs have not been run against Redis. |
 | Docker image / Compose | Written but **not built or run here** (Docker was unavailable in this environment). The compiled server was smoke-tested directly with Node against a MongoDB replica set. |
 
+## AK Nexus (WhatsApp)
+
+* Outbound `send/text` follows the AK Nexus docs. Token, account and instance status were verified live (read-only);
+  no message has been sent by this codebase yet. Use `npm run whatsapp:check -- --send-to=<your number>` once.
+* The **incoming webhook body format is not documented** by AK Nexus. The parser handles the common shapes and keeps
+  anything unrecognised as `IGNORED`; check the first real deliveries in `webhookEvents` and adjust the parser if needed.
+* No delivery/read receipts and no webhook signatures (secret URL instead).
+* AK Nexus instances connect by QR code. If that is a WhatsApp Web session rather than the official Business API,
+  WhatsApp may restrict the number for automated messaging. That is a property of the AK Nexus account, not of this code.
+
 ## Functional gaps
 
 * **Intent classification** is implicit in the LLM's tool selection; there is no separate classifier model or endpoint.
