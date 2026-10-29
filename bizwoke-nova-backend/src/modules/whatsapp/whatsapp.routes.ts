@@ -41,3 +41,24 @@ export function whatsappWebhookRouter(): Router {
 
   return r;
 }
+
+/**
+ * AK Nexus outgoing webhooks (configured in AK Nexus -> API & Automation -> Webhooks).
+ * AK Nexus does not sign requests, so the URL carries AK_NEXUS_WEBHOOK_SECRET:
+ *   POST {API}/webhooks/aknexus/<AK_NEXUS_WEBHOOK_SECRET>
+ */
+export function akNexusWebhookRouter(): Router {
+  const r = Router();
+  r.post('/:secret', async (req, res) => {
+    const expected = env().AK_NEXUS_WEBHOOK_SECRET;
+    if (!expected) throw Errors.integrationUnavailable('AK Nexus webhook');
+    const secret = typeof req.params.secret === 'string' ? req.params.secret : '';
+    if (!safeEqual(secret, expected)) throw Errors.unauthenticated('Invalid webhook secret');
+    if (!req.rawBody || req.rawBody.length === 0) throw Errors.validation('Empty webhook body');
+    const { duplicate } = await receiveWebhook(req.rawBody, req.body, 'aknexus');
+    res
+      .status(200)
+      .json({ success: true, data: { received: true, duplicate }, meta: {}, requestId: req.requestId });
+  });
+  return r;
+}

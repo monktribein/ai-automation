@@ -126,7 +126,8 @@ export async function handleCustomerMessage(
         system,
         messages: convo,
         tools: toolDefinitions(),
-        model: settings.ai.model || undefined,
+        // 'default' (sent by older dashboard versions) means: use the server's AI_MODEL.
+        model: settings.ai.model && settings.ai.model !== 'default' ? settings.ai.model : undefined,
         maxTokens: 1024,
       });
       tokens += completion.usage.inputTokens + completion.usage.outputTokens;

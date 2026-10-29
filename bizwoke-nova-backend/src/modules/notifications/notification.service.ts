@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import { Types } from 'mongoose';
+import { env } from '../../config/env';
 import { logger } from '../../common/logging/logger';
 import { TenantRepository } from '../../infrastructure/mongodb/tenant-repository';
 import { isDuplicateKeyError } from '../../infrastructure/mongodb/transaction';
@@ -64,7 +65,39 @@ export async function cancelPendingNotifications(
   );
 }
 
+/** Placeholders a business can use in its own message texts (allowlist; nothing else is substituted). */
+export const MESSAGE_PLACEHOLDERS: Record<string, string> = {
+  name: 'customerName',
+  service: 'serviceName',
+  staff: 'staffName',
+  date: 'date',
+  time: 'time',
+  when: 'when',
+  reference: 'reference',
+  business: 'businessName',
+  status: 'statusText',
+};
+
+export function fillPlaceholders(text: string, d: Record<string, string>): string {
+  return text.replace(/\{\s*([a-z]+)\s*\}/gi, (m, k: string) => {
+    const field = MESSAGE_PLACEHOLDERS[k.toLowerCase()];
+    return field ? (d[field] ?? '') : m;
+  });
+}
+
+type CustomTextKey = keyof TenantSettingsDoc['notifications']['texts'];
+
 function render(
+  key: TemplateKey,
+  d: Record<string, string>,
+  customTexts?: Partial<Record<CustomTextKey, string>>,
+): { subject: string; text: string; params: string[] } {
+  const base = renderDefault(key, d);
+  const custom = customTexts?.[key as CustomTextKey]?.trim();
+  return custom ? { ...base, text: fillPlaceholders(custom, d) } : base;
+}
+
+function renderDefault(
   key: TemplateKey,
   d: Record<string, string>,
 ): { subject: string; text: string; params: string[] } {
@@ -135,7 +168,11 @@ export async function deliverNotification(tenantIdStr: string, notificationId: s
   if (!n) return;
 
   const settings = await new TenantRepository<TenantSettingsDoc>(TenantSettingsModel, tenantId).findOne({});
-  const rendered = render(n.templateKey, { businessName: settings?.profile.displayName ?? '', ...n.data });
+  const rendered = render(
+    n.templateKey,
+    { businessName: settings?.profile.displayName ?? '', ...n.data },
+    settings?.notifications?.texts,
+  );
 
   try {
     if (n.channel === 'EMAIL') {
@@ -160,9 +197,19 @@ export async function deliverNotification(tenantIdStr: string, notificationId: s
         lastError: 'WhatsApp not enabled for this tenant',
       });
     }
+    if (env().WHATSAPP_DRY_RUN) {
+      logger.info(
+        { tenantId: tenantIdStr, notificationId, to: n.to, provider: wa.name },
+        'WhatsApp dry run: not sent',
+      );
+      return finalize(tenantId, n._id, {
+        status: 'SKIPPED',
+        lastError: 'WHATSAPP_DRY_RUN is enabled; message not sent',
+      });
+    }
     await consumeQuota(tenantId, 'whatsappMessages');
     let result: { providerMessageId: string };
-    if (n.templateKey === 'free_text' || n.templateKey === 'handoff_ack') {
+    if (!wa.requiresApprovedTemplates || n.templateKey === 'free_text' || n.templateKey === 'handoff_ack') {
       result = await wa.sendText({ phoneNumberId: integration.phoneNumberId, to: n.to, text: rendered.text });
     } else {
       const tpl = integration.templates?.find((t) => t.key === n.templateKey);

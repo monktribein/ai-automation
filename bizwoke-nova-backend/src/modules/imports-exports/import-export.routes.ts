@@ -165,14 +165,12 @@ export function exportRouter(): Router {
       resourceId: job._id,
       metadata: { includePii: job.includePii },
     });
-    res
-      .status(202)
-      .json({
-        success: true,
-        data: { id: job._id, status: job.status, columns: job.columns },
-        meta: {},
-        requestId: req.requestId,
-      });
+    res.status(202).json({
+      success: true,
+      data: { id: job._id, status: job.status, columns: job.columns },
+      meta: {},
+      requestId: req.requestId,
+    });
   });
 
   r.get('/:jobId', validate({ params: jobParam }), async (req, res) => {

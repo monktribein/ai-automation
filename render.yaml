@@ -1,0 +1,64 @@
+# Render Blueprint for the Bizwoke Nova backend.
+# Render dashboard -> New -> Blueprint -> pick this repo. Values marked `sync: false` are
+# entered in the dashboard (never committed). See DEPLOY.md for the full walkthrough.
+services:
+  - type: web
+    name: bizwoke-nova-api
+    runtime: node
+    region: singapore
+    plan: starter # free instances sleep after inactivity and would miss WhatsApp webhooks
+    rootDir: bizwoke-nova-backend
+    buildCommand: npm ci --include=dev --ignore-scripts && npm run build
+    preDeployCommand: npx tsx scripts/sync-indexes.ts
+    startCommand: npm start
+    healthCheckPath: /health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: '22'
+      - key: TRUST_PROXY
+        value: '1'
+      - key: LOG_LEVEL
+        value: info
+      - key: SWAGGER_ENABLED
+        value: 'true'
+      # --- database (MongoDB Atlas connection string) ---
+      - key: MONGODB_URI
+        sync: false
+      # --- security ---
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: APPOINTMENT_TOKEN_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false # e.g. https://your-app.vercel.app
+      # --- WhatsApp via AK Nexus ---
+      - key: WHATSAPP_PROVIDER
+        value: aknexus
+      - key: WHATSAPP_ENABLED
+        value: 'true'
+      - key: WHATSAPP_DRY_RUN
+        value: 'false'
+      - key: AK_NEXUS_API_BASE_URL
+        value: https://app.aknexus.in/api/v2
+      - key: AK_NEXUS_API_TOKEN
+        sync: false
+      - key: AK_NEXUS_INSTANCE_ID
+        value: 6ADC3724DD691
+      - key: AK_NEXUS_WEBHOOK_SECRET
+        generateValue: true
+      # --- AI assistant (needed for automated WhatsApp replies) ---
+      - key: AI_PROVIDER
+        sync: false # anthropic | openai
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        sync: false
+      # --- optional: email (password reset + email notifications) ---
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

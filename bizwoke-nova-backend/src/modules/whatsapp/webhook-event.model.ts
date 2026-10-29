@@ -7,7 +7,7 @@ import { platformSchema } from '../../infrastructure/mongodb/base-schema';
  */
 export interface WebhookEventDoc {
   _id: Types.ObjectId;
-  provider: 'whatsapp';
+  provider: 'whatsapp' | 'aknexus';
   eventKey: string;
   tenantId?: Types.ObjectId;
   payload: Record<string, unknown>;
@@ -20,7 +20,7 @@ export interface WebhookEventDoc {
 }
 
 const schema = platformSchema<WebhookEventDoc>({
-  provider: { type: String, enum: ['whatsapp'], required: true },
+  provider: { type: String, enum: ['whatsapp', 'aknexus'], required: true },
   eventKey: { type: String, required: true, maxlength: 128 },
   tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant' },
   payload: { type: Schema.Types.Mixed, required: true },

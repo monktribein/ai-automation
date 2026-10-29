@@ -37,6 +37,18 @@ export interface TenantSettingsDoc {
   bookingPolicy: BookingPolicy;
   features: { ai: boolean; whatsapp: boolean; excel: boolean; publicBooking: boolean; workflows: boolean };
   ai: { enabled: boolean; maxTurns: number; instructions?: string; model?: string; handoffMessage?: string };
+  /** Business-written customer messages. Empty text = built-in default. */
+  notifications: {
+    reminderLeadMinutes: number;
+    texts: {
+      appointment_confirmation?: string;
+      appointment_reminder?: string;
+      appointment_cancelled?: string;
+      appointment_rescheduled?: string;
+    };
+  };
+  /** Who answers inbound WhatsApp: numbered-menu booking bot, the AI assistant, or nobody (team only). */
+  whatsappAssistant: { mode: 'menu' | 'ai' | 'off'; welcomeText?: string };
   integrations: {
     whatsapp?: {
       phoneNumberId?: string;
@@ -96,6 +108,19 @@ const schema = tenantSchema<TenantSettingsDoc>({
     instructions: { type: String, maxlength: 4000 },
     model: { type: String, maxlength: 100 },
     handoffMessage: { type: String, maxlength: 500 },
+  },
+  notifications: {
+    reminderLeadMinutes: { type: Number, default: 1440, min: 0, max: 10_080 },
+    texts: {
+      appointment_confirmation: { type: String, maxlength: 1000 },
+      appointment_reminder: { type: String, maxlength: 1000 },
+      appointment_cancelled: { type: String, maxlength: 1000 },
+      appointment_rescheduled: { type: String, maxlength: 1000 },
+    },
+  },
+  whatsappAssistant: {
+    mode: { type: String, enum: ['menu', 'ai', 'off'], default: 'menu' },
+    welcomeText: { type: String, maxlength: 500 },
   },
   integrations: {
     whatsapp: {

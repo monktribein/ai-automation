@@ -9,14 +9,15 @@ import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { businessService } from '@/lib/api/services/business';
 import { BusinessSettings, Tenant } from '@/lib/api/types';
-import { Settings, Save, Globe, Palette, Shield, Building, Clock, Bot, AlertCircle } from 'lucide-react';
+import { Settings, Save, Globe, Palette, Shield, Building, Clock, Bot, AlertCircle, MessageSquare } from 'lucide-react';
+import { MessagesSettingsTab } from './messages-tab';
 import { ApiClientError } from '@/lib/api/client';
 
 export default function BusinessSettingsPage() {
   const { toast } = useToast();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
-  const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'policy' | 'ai' | 'slug'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'policy' | 'messages' | 'ai' | 'slug'>('profile');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -193,7 +194,6 @@ export default function BusinessSettingsPage() {
           enabled: aiEnabled,
           maxTurns: aiMaxTurns,
           instructions: aiInstructions,
-          model: 'default',
           handoffMessage: aiHandoffMessage,
         },
       });
@@ -249,6 +249,7 @@ export default function BusinessSettingsPage() {
           { key: 'profile', label: 'Business Profile', icon: Building },
           { key: 'branding', label: 'Branding & Design', icon: Palette },
           { key: 'policy', label: 'Booking Rules & Policy', icon: Clock },
+          { key: 'messages', label: 'Messages & WhatsApp', icon: MessageSquare },
           { key: 'ai', label: 'AI Instructions', icon: Bot },
           { key: 'slug', label: 'Public Slug (URL)', icon: Globe },
         ].map((tab) => {
@@ -530,6 +531,10 @@ export default function BusinessSettingsPage() {
             </form>
           </CardContent>
         </Card>
+      )}
+
+      {activeTab === 'messages' && settings && (
+        <MessagesSettingsTab key={settings._id ?? 'messages'} settings={settings} onSaved={loadSettings} />
       )}
 
       {/* Slug Form */}

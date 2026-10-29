@@ -374,6 +374,12 @@ describe('WhatsApp webhooks', () => {
         templates: [{ key: 'appointment_confirmation', name: 'appt_confirm', language: 'en_US' }],
       })
       .expect(200);
+    // These tests cover the AI assistant on WhatsApp (the default mode is the menu bot).
+    await request(app)
+      .patch('/api/v1/business')
+      .set(auth(t))
+      .send({ whatsappAssistant: { mode: 'ai' } })
+      .expect(200);
   });
 
   it('verifies the subscription handshake', async () => {
@@ -408,6 +414,7 @@ describe('WhatsApp webhooks', () => {
     const sent: { to: string; text?: string; template?: string }[] = [];
     const wa: WhatsAppProvider = {
       name: 'mock',
+      requiresApprovedTemplates: true,
       sendText: async (m) => (
         sent.push({ to: m.to, text: m.text }),
         { providerMessageId: `wamid.out.${sent.length}` }
@@ -495,6 +502,7 @@ describe('WhatsApp webhooks', () => {
     const sent: string[] = [];
     setWhatsAppProviderForTests({
       name: 'mock',
+      requiresApprovedTemplates: true,
       sendText: async (m) => (sent.push(m.text), { providerMessageId: `w${sent.length}` }),
       sendTemplate: async () => ({ providerMessageId: 'tpl' }),
     });

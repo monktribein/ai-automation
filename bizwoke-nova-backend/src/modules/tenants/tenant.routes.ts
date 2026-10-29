@@ -11,6 +11,19 @@ import { audit, originFromRequest } from '../audit-logs/audit.service';
 import { MembershipModel } from '../memberships/membership.model';
 import { UserModel } from '../users/user.model';
 import { TenantModel } from './tenant.model';
+import { TenantSettingsModel } from '../business-config/tenant-settings.model';
+
+const featuresBody = z
+  .object({
+    ai: z.boolean(),
+    whatsapp: z.boolean(),
+    excel: z.boolean(),
+    publicBooking: z.boolean(),
+    workflows: z.boolean(),
+  })
+  .partial()
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, 'At least one feature is required');
 import * as tenants from './tenant.service';
 
 const createBody = z
@@ -132,6 +145,29 @@ export function tenantRouter(): Router {
         },
       );
       ok(req, res, t);
+    },
+  );
+
+  // Feature entitlements are platform-controlled; tenants cannot grant themselves features.
+  r.patch(
+    '/:tenantId/features',
+    requireSuperAdmin,
+    validate({ params: tenantParam, body: featuresBody }),
+    async (req, res) => {
+      const { params, body } = valid<{ tenantId: string } & z.infer<typeof featuresBody>>(res);
+      const tenantId = new Types.ObjectId(params.tenantId);
+      if (!(await TenantModel.exists({ _id: tenantId }))) throw Errors.notFound('Tenant');
+      const set = Object.fromEntries(Object.entries(body).map(([k, v]) => [`features.${k}`, v]));
+      const settings = await TenantSettingsModel.findOneAndUpdate(
+        { tenantId },
+        { $set: set },
+        { new: true, projection: { features: 1 } },
+      ).lean();
+      await audit(
+        { ...originFromRequest(req), tenantId },
+        { action: 'tenant.features_update', resourceType: 'tenant', resourceId: tenantId, metadata: body },
+      );
+      ok(req, res, settings?.features);
     },
   );
 

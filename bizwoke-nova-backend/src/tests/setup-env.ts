@@ -22,5 +22,8 @@ Object.assign(process.env, {
   WHATSAPP_PROVIDER: '',
   WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
   WHATSAPP_APP_SECRET: 'test-app-secret',
+  AK_NEXUS_WEBHOOK_SECRET: 'test-aknexus-webhook-secret-0123456789',
+  AK_NEXUS_API_BASE_URL: 'https://aknexus.example.test/api/v2',
+  WHATSAPP_DRY_RUN: 'false',
   EMAIL_PROVIDER: '',
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { env } from '../../config/env';
 import { hmacSha256Hex, safeEqual } from '../../common/utils/crypto';
 
@@ -15,9 +16,16 @@ export interface WhatsAppTextMessage {
 
 export interface WhatsAppProvider {
   readonly name: string;
+  /**
+   * true: business-initiated messages must use provider-approved templates (Meta Cloud API).
+   * false: every notification is sent as rendered text (AK Nexus instances).
+   */
+  readonly requiresApprovedTemplates: boolean;
   sendTemplate(msg: WhatsAppTemplateMessage): Promise<{ providerMessageId: string }>;
   /** Free-form text: only valid inside the 24h customer-service window opened by an inbound message. */
   sendText(msg: WhatsAppTextMessage): Promise<{ providerMessageId: string }>;
+  /** Live connection state of a sender (where the provider exposes it). */
+  getInstanceStatus?(instanceId: string): Promise<{ status: string }>;
 }
 
 export class WhatsAppProviderError extends Error {
@@ -36,6 +44,7 @@ export class WhatsAppProviderError extends Error {
  */
 export class MetaCloudWhatsAppProvider implements WhatsAppProvider {
   readonly name = 'meta';
+  readonly requiresApprovedTemplates = true;
   constructor(
     private readonly accessToken: string,
     private readonly graphUrl: string,
@@ -96,11 +105,94 @@ export class MetaCloudWhatsAppProvider implements WhatsAppProvider {
   }
 }
 
+/**
+ * AK Nexus API v2 adapter (https://app.aknexus.in/api/v2, Bearer token).
+ * Contract from the AK Nexus API docs: POST /whatsapp/send/text { instance_id, to, message }
+ * -> { status: "success", data: { sent: true } }. The sender is an AK Nexus WhatsApp instance id,
+ * stored in the tenant's `integrations.whatsapp.phoneNumberId` field.
+ */
+export class AkNexusWhatsAppProvider implements WhatsAppProvider {
+  readonly name = 'aknexus';
+  readonly requiresApprovedTemplates = false;
+  constructor(
+    private readonly token: string,
+    private readonly baseUrl: string,
+  ) {}
+
+  async sendText(m: WhatsAppTextMessage) {
+    if (!/^[A-Za-z0-9_-]{5,64}$/.test(m.phoneNumberId)) {
+      throw new WhatsAppProviderError('Invalid AK Nexus instance id', false);
+    }
+    // WhatsApp privacy ids ("...@lid") must be sent verbatim; phone numbers are sent as digits.
+    const to = /^\d{5,25}@lid$/.test(m.to) ? m.to : m.to.replace(/\D/g, '');
+    if (to.replace(/\D/g, '').length < 8)
+      throw new WhatsAppProviderError('Invalid recipient phone number', false);
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl.replace(/\/$/, '')}/whatsapp/send/text`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_id: m.phoneNumberId, to, message: m.text.slice(0, 4096) }),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (err) {
+      throw new WhatsAppProviderError(`AK Nexus unreachable: ${(err as Error).message}`, true);
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      status?: string;
+      message?: string;
+      messages?: { error?: string };
+      data?: {
+        sent?: boolean;
+        id?: string;
+        message_id?: string;
+        key?: { id?: string };
+        // Observed live: { data: { status, message, data: { key: { remoteJid, id } } } }
+        data?: { key?: { id?: string } };
+      };
+    };
+    if (!res.ok || json.status !== 'success' || json.data?.sent === false) {
+      const reason = json.message ?? json.messages?.error ?? `AK Nexus API error ${res.status}`;
+      throw new WhatsAppProviderError(reason, res.status === 429 || res.status >= 500);
+    }
+    // Use the WhatsApp message id when present, else record a local reference.
+    const id = json.data?.id ?? json.data?.message_id ?? json.data?.key?.id ?? json.data?.data?.key?.id;
+    return { providerMessageId: id ?? `aknexus-${randomUUID()}` };
+  }
+
+  async sendTemplate(): Promise<{ providerMessageId: string }> {
+    throw new WhatsAppProviderError('AK Nexus adapter sends rendered text, not Meta templates', false);
+  }
+
+  /** GET /whatsapp/instance/status/{id} -> { status: "connected" | "disconnected" | ... }. Read-only. */
+  async getInstanceStatus(instanceId: string): Promise<{ status: string }> {
+    if (!/^[A-Za-z0-9_-]{5,64}$/.test(instanceId)) return { status: 'invalid_instance_id' };
+    let res: Response;
+    try {
+      res = await fetch(
+        `${this.baseUrl.replace(/\/$/, '')}/whatsapp/instance/status/${encodeURIComponent(instanceId)}`,
+        { headers: { Authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(15_000) },
+      );
+    } catch (err) {
+      throw new WhatsAppProviderError(`AK Nexus unreachable: ${(err as Error).message}`, true);
+    }
+    const json = (await res.json().catch(() => ({}))) as { status?: string; messages?: { error?: string } };
+    if (res.status === 401)
+      throw new WhatsAppProviderError(json.messages?.error ?? 'AK Nexus token rejected', false);
+    if (!res.ok) throw new WhatsAppProviderError(`AK Nexus API error ${res.status}`, res.status >= 500);
+    return { status: typeof json.status === 'string' ? json.status : 'unknown' };
+  }
+}
+
 let override: WhatsAppProvider | null | undefined;
 
 export function getWhatsAppProvider(): WhatsAppProvider | null {
   if (override !== undefined) return override;
   const e = env();
+  if (!e.WHATSAPP_ENABLED) return null;
+  if (e.WHATSAPP_PROVIDER === 'aknexus' && e.AK_NEXUS_API_TOKEN) {
+    return new AkNexusWhatsAppProvider(e.AK_NEXUS_API_TOKEN, e.AK_NEXUS_API_BASE_URL);
+  }
   if (e.WHATSAPP_PROVIDER === 'meta' && e.WHATSAPP_ACCESS_TOKEN) {
     return new MetaCloudWhatsAppProvider(
       e.WHATSAPP_ACCESS_TOKEN,
