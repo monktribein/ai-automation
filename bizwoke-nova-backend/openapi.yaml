@@ -1,0 +1,703 @@
+openapi: 3.0.3
+info:
+  title: Bizwoke Nova API
+  version: 1.0.0
+  description: |
+    Multi-tenant appointment booking and business enquiry automation backend.
+
+    **Tenant scoping.** Tenant-scoped endpoints act on the tenant selected in the caller's session
+    (chosen at login with `tenantSlug`, or via `POST /auth/switch-tenant`) and re-verified against an
+    ACTIVE membership on every request. A `tenantId` is never accepted in bodies, query strings or headers.
+    Public endpoints resolve the tenant server-side from `:slug`.
+
+    **Envelope.** Success: `{ success: true, data, meta, requestId }`.
+    Error: `{ success: false, error: { code, message, details }, requestId }`.
+servers:
+  - url: /
+tags:
+  - name: Health
+  - name: Auth
+  - name: Tenants
+  - name: Subscriptions
+  - name: Business
+  - name: Members & Roles
+  - name: Locations
+  - name: Services
+  - name: Staff
+  - name: Customers
+  - name: Leads
+  - name: Appointments
+  - name: Public
+  - name: Conversations
+  - name: Knowledge base
+  - name: AI
+  - name: Workflows
+  - name: Notifications
+  - name: Imports
+  - name: Exports
+  - name: Governance
+  - name: Webhooks
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    appointmentToken: { type: apiKey, in: header, name: X-Appointment-Token }
+    whatsappSignature: { type: apiKey, in: header, name: X-Hub-Signature-256 }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    Slug: { name: slug, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$' } }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 8-128 URL-safe chars. Retries with the same key and body return the original result.
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,128}$' }
+    Resource: { name: resource, in: path, required: true, schema: { type: string, enum: [customers, leads, services, staff, appointments] } }
+    JobId: { name: jobId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Ok:
+      description: Success
+      content: { application/json: { schema: { $ref: '#/components/schemas/Success' } } }
+    Created:
+      description: Created
+      content: { application/json: { schema: { $ref: '#/components/schemas/Success' } } }
+    Accepted:
+      description: Accepted for asynchronous processing
+      content: { application/json: { schema: { $ref: '#/components/schemas/Success' } } }
+    Xlsx:
+      description: Excel workbook
+      content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } }
+  schemas:
+    ObjectId: { type: string, pattern: '^[a-f0-9]{24}$' }
+    Success:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: {}
+        meta: { type: object, properties: { page: { type: integer }, limit: { type: integer }, total: { type: integer }, totalPages: { type: integer } } }
+        requestId: { type: string }
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, SLOT_UNAVAILABLE, INVALID_STATE_TRANSITION, IDEMPOTENCY_CONFLICT, RATE_LIMITED, QUOTA_EXCEEDED, FEATURE_DISABLED, TENANT_INACTIVE, INTEGRATION_UNAVAILABLE, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, PROVIDER_ERROR, INTERNAL_ERROR]
+            message: { type: string }
+            details: { type: array, items: { type: object, properties: { path: { type: string }, message: { type: string } } } }
+        requestId: { type: string }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: string, example: 15m }
+        tenantId: { $ref: '#/components/schemas/ObjectId' }
+    Register:
+      type: object
+      required: [email, password, name]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10, description: Letters and digits required }
+        name: { type: string }
+        phone: { type: string }
+        business:
+          type: object
+          description: Optional self-service business provisioning (ALLOW_SELF_SIGNUP_TENANTS)
+          required: [name, slug]
+          properties:
+            name: { type: string }
+            slug: { type: string }
+            timezone: { type: string, example: Asia/Kolkata }
+            locale: { type: string, example: en }
+            category: { type: string, example: salon }
+    Login:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        tenantSlug: { type: string, description: Select the active tenant (membership required) }
+    Tenant:
+      type: object
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [ACTIVE, SUSPENDED, DEACTIVATED] }
+        timezone: { type: string }
+        locale: { type: string }
+    TimeRange:
+      type: object
+      required: [dayOfWeek, start, end]
+      properties:
+        dayOfWeek: { type: integer, minimum: 1, maximum: 7, description: 'ISO weekday, 1 = Monday' }
+        start: { type: string, example: '09:00' }
+        end: { type: string, example: '17:00' }
+    BusinessPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        profile: { type: object, properties: { displayName: { type: string }, description: { type: string }, category: { type: string }, email: { type: string }, phone: { type: string }, website: { type: string, description: https only }, address: { type: string } } }
+        branding: { type: object, properties: { logoUrl: { type: string, description: https only }, primaryColor: { type: string, example: '#112233' }, accentColor: { type: string } } }
+        timezone: { type: string }
+        locale: { type: string }
+        currency: { type: string, example: USD }
+        operatingHours: { type: array, items: { type: object, properties: { dayOfWeek: { type: integer }, open: { type: string }, close: { type: string } } } }
+        bookingPolicy:
+          type: object
+          properties:
+            minNoticeMinutes: { type: integer }
+            maxAdvanceDays: { type: integer }
+            slotIntervalMinutes: { type: integer, enum: [5, 10, 15, 20, 30, 60] }
+            allowGuestBooking: { type: boolean }
+            requireConfirmation: { type: boolean }
+            cancellationCutoffMinutes: { type: integer }
+            rescheduleCutoffMinutes: { type: integer }
+        ai: { type: object, description: Requires ai:configure, properties: { enabled: { type: boolean }, maxTurns: { type: integer }, instructions: { type: string }, model: { type: string }, handoffMessage: { type: string } } }
+    Service:
+      type: object
+      required: [name, durationMinutes]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        durationMinutes: { type: integer, description: Multiple of 5 }
+        bufferMinutes: { type: integer, description: Multiple of 5 }
+        price: { type: number }
+        currency: { type: string }
+        category: { type: string }
+        locationIds: { type: array, items: { $ref: '#/components/schemas/ObjectId' } }
+        publiclyBookable: { type: boolean }
+        metadata: { type: object, additionalProperties: { oneOf: [{ type: string }, { type: number }, { type: boolean }] } }
+    Staff:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        title: { type: string }
+        bio: { type: string }
+        locationId: { $ref: '#/components/schemas/ObjectId' }
+        capacity: { type: integer, minimum: 1, maximum: 50, description: Max concurrent appointments }
+        publiclyVisible: { type: boolean }
+        serviceIds: { type: array, items: { $ref: '#/components/schemas/ObjectId' } }
+    Customer:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        preferredLanguage: { type: string }
+        consent: { type: object, properties: { email: { type: boolean }, whatsapp: { type: boolean }, sms: { type: boolean }, marketing: { type: boolean } } }
+        tags: { type: array, items: { type: string } }
+        notes: { type: string, description: Operational notes only. Do not store medical information. }
+    Lead:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        message: { type: string }
+        interest: { type: string }
+        sourceDetail: { type: string }
+    Slot:
+      type: object
+      properties:
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        staffId: { $ref: '#/components/schemas/ObjectId' }
+        staffName: { type: string }
+    AppointmentCreate:
+      type: object
+      required: [serviceId, startAt]
+      description: Provide exactly one of customerId or customer.
+      properties:
+        serviceId: { $ref: '#/components/schemas/ObjectId' }
+        staffId: { $ref: '#/components/schemas/ObjectId' }
+        startAt: { type: string, format: date-time, description: ISO-8601 with offset; aligned to 5 minutes }
+        customerId: { $ref: '#/components/schemas/ObjectId' }
+        customer: { $ref: '#/components/schemas/Customer' }
+        customerNotes: { type: string }
+    Appointment:
+      type: object
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        reference: { type: string, example: BK-7Q4M-X2PA }
+        status: { type: string, enum: [REQUESTED, PENDING_CONFIRMATION, CONFIRMED, CHECKED_IN, COMPLETED, CANCELLED, NO_SHOW] }
+        source: { type: string, enum: [STAFF, PUBLIC, AI, WHATSAPP, IMPORT] }
+        serviceId: { $ref: '#/components/schemas/ObjectId' }
+        staffId: { $ref: '#/components/schemas/ObjectId' }
+        customerId: { $ref: '#/components/schemas/ObjectId' }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        blockEndAt: { type: string, format: date-time, description: End including buffer }
+        timezone: { type: string }
+        seat: { type: integer }
+    Workflow:
+      type: object
+      required: [name, trigger, actions]
+      properties:
+        name: { type: string }
+        trigger: { type: string, enum: [appointment.created, appointment.status_changed, appointment.rescheduled, lead.created] }
+        conditions: { type: object, properties: { toStatus: { type: string } } }
+        enabled: { type: boolean }
+        actions:
+          type: array
+          items:
+            type: object
+            required: [type, channel, recipient, text]
+            properties:
+              type: { type: string, enum: [send_notification] }
+              channel: { type: string, enum: [EMAIL, WHATSAPP] }
+              recipient: { type: string, enum: [customer, fixed] }
+              fixedTo: { type: string, format: email }
+              subject: { type: string }
+              text: { type: string, description: 'Supports {{customerName}}, {{businessName}}, {{reference}}, {{startAt}}' }
+              offsetMinutes: { type: integer }
+              relativeTo: { type: string, enum: [event, appointment_start] }
+
+paths:
+  /health:
+    get: { tags: [Health], security: [], summary: Service status and integration availability, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /health/live:
+    get: { tags: [Health], security: [], summary: Liveness probe, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /health/ready:
+    get: { tags: [Health], security: [], summary: Readiness probe (MongoDB connected), responses: { '200': { $ref: '#/components/responses/Ok' }, '503': { $ref: '#/components/responses/Error' } } }
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register a user (optionally provisioning a business tenant)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Register' } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Log in; returns tokens, memberships, and selects a tenant when unambiguous
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Login' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate refresh token (reuse of a rotated token revokes the whole session)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } } } } }
+      responses: { '200': { description: New token pair, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }, '401': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke this session (or all sessions)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { allSessions: { type: boolean } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Request a password reset (identical response whether or not the account exists)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
+      responses: { '202': { $ref: '#/components/responses/Accepted' } }
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Reset password with a single-use, expiring token; revokes all sessions
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token, newPassword], properties: { token: { type: string }, newPassword: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/switch-tenant:
+    post:
+      tags: [Auth]
+      summary: Select the active tenant (membership verified)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [tenantId], properties: { tenantId: { $ref: '#/components/schemas/ObjectId' } } } } } }
+      responses: { '200': { description: New token pair, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/me:
+    get: { tags: [Auth], summary: Current user and memberships, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/tenants:
+    post:
+      tags: [Tenants]
+      summary: Create a tenant (SUPER_ADMIN)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name, slug], properties: { name: { type: string }, slug: { type: string }, timezone: { type: string }, locale: { type: string }, category: { type: string }, ownerUserId: { $ref: '#/components/schemas/ObjectId' } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '403': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+    get:
+      tags: [Tenants]
+      summary: List tenants (all for SUPER_ADMIN, own memberships otherwise)
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string, enum: [ACTIVE, SUSPENDED, DEACTIVATED] } }, { name: search, in: query, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /api/v1/tenants/{tenantId}:
+    parameters: [{ name: tenantId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    get: { tags: [Tenants], summary: Get tenant (SUPER_ADMIN or member), responses: { '200': { $ref: '#/components/responses/Ok' }, '404': { $ref: '#/components/responses/Error' } } }
+    patch:
+      tags: [Tenants]
+      summary: Update tenant (SUPER_ADMIN)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, slug: { type: string }, timezone: { type: string }, locale: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/tenants/{tenantId}/status:
+    parameters: [{ name: tenantId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    patch:
+      tags: [Tenants]
+      summary: Activate, suspend or deactivate a tenant (SUPER_ADMIN)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [ACTIVE, SUSPENDED, DEACTIVATED] }, reason: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' } }
+
+  /api/v1/users:
+    get:
+      tags: [Tenants]
+      summary: List platform user accounts (SUPER_ADMIN)
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: search, in: query, schema: { type: string } }, { name: status, in: query, schema: { type: string, enum: [ACTIVE, DEACTIVATED] } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/users/{id}/status:
+    patch:
+      tags: [Tenants]
+      summary: Activate or deactivate an account; deactivation revokes all sessions (SUPER_ADMIN)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [ACTIVE, DEACTIVATED] }, reason: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+
+  /api/v1/subscriptions/plans:
+    get: { tags: [Subscriptions], summary: List active plans, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post:
+      tags: [Subscriptions]
+      summary: Create plan (SUPER_ADMIN)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [code, name], properties: { code: { type: string }, name: { type: string }, features: { type: array, items: { type: string } }, limits: { type: object, properties: { appointmentsPerMonth: { type: integer }, aiMessagesPerMonth: { type: integer }, aiTokensPerMonth: { type: integer }, whatsappMessagesPerMonth: { type: integer }, exportsPerMonth: { type: integer }, importsPerMonth: { type: integer }, staff: { type: integer }, services: { type: integer } } }, isDefault: { type: boolean }, active: { type: boolean } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/subscriptions/plans/{id}:
+    patch: { tags: [Subscriptions], summary: Update plan (SUPER_ADMIN), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/subscriptions/tenants/{tenantId}:
+    put:
+      tags: [Subscriptions]
+      summary: Assign plan and limit overrides to a tenant (SUPER_ADMIN)
+      parameters: [{ name: tenantId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [planId], properties: { planId: { $ref: '#/components/schemas/ObjectId' }, status: { type: string, enum: [ACTIVE, PAST_DUE, CANCELLED] }, limitOverrides: { type: object } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /api/v1/subscriptions/current:
+    get: { tags: [Subscriptions], summary: Current tenant subscription and effective limits (usage:read), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/business:
+    get: { tags: [Business], summary: Business profile, settings and limits (business:read), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch:
+      tags: [Business]
+      summary: Update business configuration (business:manage)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/BusinessPatch' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/business/slug:
+    patch:
+      tags: [Business]
+      summary: Change the public business slug (business:manage)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [slug], properties: { slug: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/business/integrations/whatsapp:
+    put:
+      tags: [Business]
+      summary: Connect a WhatsApp Business phone number id and approved templates (integrations:manage)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [phoneNumberId, enabled], properties: { phoneNumberId: { type: string }, displayNumber: { type: string }, enabled: { type: boolean }, templates: { type: array, items: { type: object, properties: { key: { type: string, enum: [appointment_confirmation, appointment_reminder, appointment_cancelled, appointment_rescheduled, appointment_access, handoff_ack] }, name: { type: string }, language: { type: string, example: en_US } } } } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/business/closures:
+    get: { tags: [Business], summary: Upcoming business-wide closures, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post:
+      tags: [Business]
+      summary: Add a business-wide closure/holiday (availability:write)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [type, startsAt, endsAt], properties: { type: { type: string, enum: [LEAVE, HOLIDAY, BLOCK] }, startsAt: { type: string, format: date-time }, endsAt: { type: string, format: date-time }, reason: { type: string } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' } }
+  /api/v1/business/closures/{id}:
+    delete: { tags: [Business], summary: Remove a closure, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/members:
+    get: { tags: [Members & Roles], summary: List memberships (members:read), parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post:
+      tags: [Members & Roles]
+      summary: Add an existing user to this tenant (members:manage)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, roleKeys], properties: { email: { type: string }, roleKeys: { type: array, items: { type: string } }, staffId: { $ref: '#/components/schemas/ObjectId' } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/members/{id}:
+    patch:
+      tags: [Members & Roles]
+      summary: Change roles/status/staff link (members:manage; not your own)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { roleKeys: { type: array, items: { type: string } }, status: { type: string, enum: [ACTIVE, SUSPENDED, REVOKED] }, staffId: { nullable: true, allOf: [{ $ref: '#/components/schemas/ObjectId' }] } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/roles:
+    get: { tags: [Members & Roles], summary: List roles, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post:
+      tags: [Members & Roles]
+      summary: Create a custom role (roles:manage; cannot exceed creator's permissions)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [key, name, permissions], properties: { key: { type: string, example: FRONT_DESK }, name: { type: string }, description: { type: string }, permissions: { type: array, items: { type: string } } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/roles/permissions:
+    get: { tags: [Members & Roles], summary: Permission catalog, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/roles/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    patch: { tags: [Members & Roles], summary: Update custom role, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Members & Roles], summary: Delete unused custom role, responses: { '200': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error' } } }
+
+  /api/v1/locations:
+    get: { tags: [Locations], summary: List locations, parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { tags: [Locations], summary: Create location, requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, address: { type: string }, city: { type: string }, country: { type: string }, phone: { type: string }, timezone: { type: string } } } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+  /api/v1/locations/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Locations], summary: Get location, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Locations], summary: Update location, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Locations], summary: Archive location, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/services:
+    get:
+      tags: [Services]
+      summary: List services
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string } }, { name: search, in: query, schema: { type: string } }, { name: sort, in: query, schema: { type: string, enum: [name, -name, createdAt, -createdAt, durationMinutes, -durationMinutes] } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+    post: { tags: [Services], summary: Create service, requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Service' } } } }, responses: { '201': { $ref: '#/components/responses/Created' }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/v1/services/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Services], summary: Get service with assigned staff ids, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Services], summary: Update service, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Services], summary: Archive service (never hard-deleted), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/staff:
+    get: { tags: [Staff], summary: List staff, parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: serviceId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { tags: [Staff], summary: Create staff member (with service assignments), requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Staff' } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+  /api/v1/staff/{staffId}:
+    parameters: [{ name: staffId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    get: { tags: [Staff], summary: Get staff with service ids, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Staff], summary: Update staff (serviceIds replaces assignments), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Staff], summary: Archive staff, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/staff/{staffId}/availability:
+    parameters: [{ name: staffId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    get: { tags: [Staff], summary: Weekly schedule and upcoming exceptions, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    put:
+      tags: [Staff]
+      summary: Replace weekly schedule and breaks (business timezone)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [weekly], properties: { weekly: { type: array, items: { $ref: '#/components/schemas/TimeRange' } }, breaks: { type: array, items: { $ref: '#/components/schemas/TimeRange' } } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /api/v1/staff/{staffId}/exceptions:
+    post:
+      tags: [Staff]
+      summary: Add leave / blocked period
+      parameters: [{ name: staffId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [type, startsAt, endsAt], properties: { type: { type: string, enum: [LEAVE, HOLIDAY, BLOCK] }, startsAt: { type: string, format: date-time }, endsAt: { type: string, format: date-time }, reason: { type: string } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' } }
+  /api/v1/staff/{staffId}/exceptions/{id}:
+    delete:
+      tags: [Staff]
+      summary: Remove an exception
+      parameters: [{ name: staffId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }, { $ref: '#/components/parameters/Id' }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  /api/v1/customers:
+    get:
+      tags: [Customers]
+      summary: Search customers (contact fields masked without customers:pii)
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: search, in: query, schema: { type: string } }, { name: tag, in: query, schema: { type: string } }, { name: sort, in: query, schema: { type: string, enum: [name, -name, createdAt, -createdAt] } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+    post: { tags: [Customers], summary: Create customer, requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Customer' } } } }, responses: { '201': { $ref: '#/components/responses/Created' }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/v1/customers/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Customers], summary: Get customer, responses: { '200': { $ref: '#/components/responses/Ok' }, '404': { $ref: '#/components/responses/Error' } } }
+    patch: { tags: [Customers], summary: Update customer / consent, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Customers], summary: Erase (anonymize) customer PII; history retained de-identified (customers:delete), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/customers/{id}/appointments:
+    get: { tags: [Customers], summary: Customer appointment history, parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/leads:
+    get:
+      tags: [Leads]
+      summary: List leads
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string, enum: [NEW, CONTACTED, QUALIFIED, CONVERTED, LOST] } }, { name: source, in: query, schema: { type: string } }, { name: search, in: query, schema: { type: string } }, { name: assignedMembershipId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+    post: { tags: [Leads], summary: Create lead (possible duplicates flagged), requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Lead' } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+  /api/v1/leads/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Leads], summary: Get lead, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Leads], summary: Update status/assignment (CONVERTED creates or links a customer), requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string }, assignedMembershipId: { type: string, nullable: true }, interest: { type: string } } } } } }, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/appointments:
+    get:
+      tags: [Appointments]
+      summary: List appointments (CUSTOMER role sees only their own)
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string } }, { name: staffId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: serviceId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: customerId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: from, in: query, schema: { type: string, format: date-time } }, { name: to, in: query, schema: { type: string, format: date-time } }, { name: sort, in: query, schema: { type: string, enum: [startAt, -startAt, createdAt, -createdAt] } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+    post:
+      tags: [Appointments]
+      summary: Create appointment (atomic allocation; idempotent with Idempotency-Key)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/Success' }, { properties: { data: { $ref: '#/components/schemas/Appointment' } } }] } } } }, '200': { description: Idempotent replay (meta.idempotentReplay = true) }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/appointments/slots:
+    get:
+      tags: [Appointments]
+      summary: Real available slots
+      parameters: [{ name: serviceId, in: query, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: from, in: query, required: true, schema: { type: string, format: date } }, { name: to, in: query, schema: { type: string, format: date, description: Max 31 days } }, { name: staffId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }]
+      responses: { '200': { description: Slots, content: { application/json: { schema: { allOf: [{ $ref: '#/components/schemas/Success' }, { properties: { data: { type: array, items: { $ref: '#/components/schemas/Slot' } } } }] } } } } }
+  /api/v1/appointments/{id}:
+    get: { tags: [Appointments], summary: Get appointment, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/v1/appointments/{id}/history:
+    get: { tags: [Appointments], summary: Appointment event history, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/appointments/{id}/status:
+    patch:
+      tags: [Appointments]
+      summary: Confirm, check in, complete, cancel or mark no-show (validated transitions)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [PENDING_CONFIRMATION, CONFIRMED, CHECKED_IN, COMPLETED, CANCELLED, NO_SHOW] }, reason: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/appointments/{id}/reschedule:
+    post:
+      tags: [Appointments]
+      summary: Reschedule atomically
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [startAt], properties: { startAt: { type: string, format: date-time }, staffId: { $ref: '#/components/schemas/ObjectId' } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '409': { $ref: '#/components/responses/Error' } }
+
+  /api/v1/public/{slug}:
+    get: { tags: [Public], security: [], summary: Public business profile and booking policy, parameters: [{ $ref: '#/components/parameters/Slug' }], responses: { '200': { $ref: '#/components/responses/Ok' }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/v1/public/{slug}/services:
+    get: { tags: [Public], security: [], summary: Publicly bookable services, parameters: [{ $ref: '#/components/parameters/Slug' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/public/{slug}/staff:
+    get: { tags: [Public], security: [], summary: Public staff (no contact details), parameters: [{ $ref: '#/components/parameters/Slug' }, { name: serviceId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/public/{slug}/slots:
+    get:
+      tags: [Public]
+      security: []
+      summary: Available slots (policy-enforced)
+      parameters: [{ $ref: '#/components/parameters/Slug' }, { name: serviceId, in: query, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: from, in: query, required: true, schema: { type: string, format: date } }, { name: to, in: query, schema: { type: string, format: date } }, { name: staffId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /api/v1/public/{slug}/appointments:
+    post:
+      tags: [Public]
+      security: []
+      summary: Guest booking; returns a manage token bound to this appointment
+      parameters: [{ $ref: '#/components/parameters/Slug' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [serviceId, startAt, customer], properties: { serviceId: { $ref: '#/components/schemas/ObjectId' }, staffId: { $ref: '#/components/schemas/ObjectId' }, startAt: { type: string, format: date-time }, customer: { type: object, required: [name], properties: { name: { type: string }, email: { type: string }, phone: { type: string }, consent: { type: object, properties: { email: { type: boolean }, whatsapp: { type: boolean }, marketing: { type: boolean } } } } }, customerNotes: { type: string } } } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' }, '403': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/public/{slug}/appointment-access:
+    post:
+      tags: [Public]
+      security: []
+      summary: Re-send a manage token to the contact on file (token is never returned)
+      parameters: [{ $ref: '#/components/parameters/Slug' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reference], properties: { reference: { type: string }, email: { type: string }, phone: { type: string } } } } } }
+      responses: { '202': { $ref: '#/components/responses/Accepted' } }
+  /api/v1/public/{slug}/appointments/{appointmentId}:
+    parameters: [{ $ref: '#/components/parameters/Slug' }, { name: appointmentId, in: path, required: true, schema: { $ref: '#/components/schemas/ObjectId' } }]
+    get: { tags: [Public], security: [{ appointmentToken: [] }], summary: View own appointment, responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' }, '403': { $ref: '#/components/responses/Error' } } }
+    patch:
+      tags: [Public]
+      security: [{ appointmentToken: [] }]
+      summary: Cancel or reschedule own appointment (policy cutoffs apply)
+      requestBody: { required: true, content: { application/json: { schema: { oneOf: [{ type: object, required: [action], properties: { action: { type: string, enum: [cancel] }, reason: { type: string } } }, { type: object, required: [action, startAt], properties: { action: { type: string, enum: [reschedule] }, startAt: { type: string, format: date-time }, staffId: { $ref: '#/components/schemas/ObjectId' } } }] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' }, '403': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/public/{slug}/enquiries:
+    post:
+      tags: [Public]
+      security: []
+      summary: Submit an enquiry (creates a lead)
+      parameters: [{ $ref: '#/components/parameters/Slug' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Lead' } } } }
+      responses: { '201': { $ref: '#/components/responses/Created' } }
+
+  /api/v1/conversations:
+    get: { tags: [Conversations], summary: List conversation sessions, parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string, enum: [OPEN, HANDOFF, CLOSED] } }, { name: channel, in: query, schema: { type: string, enum: [API, WHATSAPP] } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/conversations/{id}:
+    get: { tags: [Conversations], summary: Session with messages, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/conversations/{id}/tool-executions:
+    get: { tags: [Conversations], summary: AI tool execution log, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/conversations/{id}/status:
+    patch: { tags: [Conversations], summary: Take over (HANDOFF), reopen or close, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [OPEN, HANDOFF, CLOSED] }, reason: { type: string } } } } } }, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/conversations/{id}/messages:
+    post: { tags: [Conversations], summary: Human agent reply (queued to WhatsApp for WhatsApp sessions), parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [text], properties: { text: { type: string } } } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+
+  /api/v1/knowledge-base:
+    get: { tags: [Knowledge base], summary: List articles, parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string, enum: [DRAFT, APPROVED, ARCHIVED] } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { tags: [Knowledge base], summary: Create draft article, requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title, content], properties: { title: { type: string }, content: { type: string }, tags: { type: array, items: { type: string } } } } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+  /api/v1/knowledge-base/search:
+    get: { tags: [Knowledge base], summary: Search APPROVED articles, parameters: [{ name: q, in: query, required: true, schema: { type: string } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/knowledge-base/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Knowledge base], summary: Get article, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Knowledge base], summary: Edit / approve (content edits reset to DRAFT), responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Knowledge base], summary: Archive article, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/ai/status:
+    get: { tags: [AI], summary: AI provider availability and tool list, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/ai/chat:
+    post:
+      tags: [AI]
+      summary: Send a customer message to the AI assistant (API channel)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { sessionId: { $ref: '#/components/schemas/ObjectId' }, message: { type: string }, customerId: { $ref: '#/components/schemas/ObjectId' }, contactName: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '502': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
+
+  /api/v1/workflows:
+    get: { tags: [Workflows], summary: List workflows, parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    post: { tags: [Workflows], summary: Create workflow, requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }, responses: { '201': { $ref: '#/components/responses/Created' } } }
+  /api/v1/workflows/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get: { tags: [Workflows], summary: Get workflow, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    patch: { tags: [Workflows], summary: Update workflow, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+    delete: { tags: [Workflows], summary: Delete workflow, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/workflows/{id}/executions:
+    get: { tags: [Workflows], summary: Workflow execution history, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/notifications:
+    get: { tags: [Notifications], summary: Notification log (QUEUED/SENT/DELIVERED/READ/FAILED/SKIPPED/CANCELLED), parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, schema: { type: string } }, { name: channel, in: query, schema: { type: string } }, { name: appointmentId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/imports/{resource}/template:
+    get: { tags: [Imports], summary: Download an import template, parameters: [{ $ref: '#/components/parameters/Resource' }], responses: { '200': { $ref: '#/components/responses/Xlsx' } } }
+  /api/v1/imports/{resource}/validate:
+    post:
+      tags: [Imports]
+      summary: Dry-run validation report (nothing written)
+      parameters: [{ $ref: '#/components/parameters/Resource' }, { name: duplicateStrategy, in: query, schema: { type: string, enum: [skip, update, fail], default: skip } }]
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '413': { $ref: '#/components/responses/Error' }, '415': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/imports/{resource}:
+    post:
+      tags: [Imports]
+      summary: Start an import job (all rows validated first; any invalid row aborts)
+      parameters: [{ $ref: '#/components/parameters/Resource' }, { name: duplicateStrategy, in: query, schema: { type: string, enum: [skip, update, fail], default: skip } }]
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } } } } }
+      responses: { '202': { $ref: '#/components/responses/Accepted' } }
+  /api/v1/imports/{jobId}:
+    get: { tags: [Imports], summary: Import job status and row errors, parameters: [{ $ref: '#/components/parameters/JobId' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/exports/{resource}:
+    post:
+      tags: [Exports]
+      summary: Start an export job (PII columns only with customers:pii)
+      parameters: [{ $ref: '#/components/parameters/Resource' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { from: { type: string, format: date-time }, to: { type: string, format: date-time }, status: { type: string } } } } } }
+      responses: { '202': { $ref: '#/components/responses/Accepted' }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/exports/{jobId}:
+    get: { tags: [Exports], summary: Export job status (with downloadPath when complete), parameters: [{ $ref: '#/components/parameters/JobId' }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/exports/{jobId}/download:
+    get: { tags: [Exports], summary: Authorized tenant-scoped download, parameters: [{ $ref: '#/components/parameters/JobId' }], responses: { '200': { $ref: '#/components/responses/Xlsx' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } } }
+
+  /api/v1/audit-logs:
+    get: { tags: [Governance], summary: Tenant audit log (audit:read), parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: action, in: query, schema: { type: string } }, { name: resourceType, in: query, schema: { type: string } }, { name: actorUserId, in: query, schema: { $ref: '#/components/schemas/ObjectId' } }, { name: from, in: query, schema: { type: string, format: date-time } }, { name: to, in: query, schema: { type: string, format: date-time } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+  /api/v1/usage:
+    get: { tags: [Governance], summary: Usage for a month vs. limits (usage:read), parameters: [{ name: period, in: query, schema: { type: string, example: '2026-10' } }], responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  /api/v1/webhooks/whatsapp:
+    get:
+      tags: [Webhooks]
+      security: []
+      summary: Meta webhook verification handshake
+      parameters: [{ name: hub.mode, in: query, schema: { type: string } }, { name: hub.verify_token, in: query, schema: { type: string } }, { name: hub.challenge, in: query, schema: { type: string } }]
+      responses: { '200': { description: Echoed challenge, content: { text/plain: { schema: { type: string } } } }, '403': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
+    post:
+      tags: [Webhooks]
+      security: [{ whatsappSignature: [] }]
+      summary: Signed WhatsApp event delivery (stored once, processed asynchronously)
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '401': { $ref: '#/components/responses/Error' } }
