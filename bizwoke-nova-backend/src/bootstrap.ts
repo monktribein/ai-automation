@@ -5,6 +5,7 @@ import { registerWhatsAppJobs } from './modules/whatsapp/whatsapp.service';
 import { registerImportExportJobs } from './modules/imports-exports/import-export.service';
 import { registerCleanupJobs } from './jobs/cleanup';
 import { registerHandoffHandlers } from './modules/conversations/handoff';
+import { registerGoogleSheetHandlers } from './modules/google-sheets/google-sheet.service';
 
 let done = false;
 
@@ -19,4 +20,5 @@ export function bootstrapModules() {
   registerImportExportJobs();
   registerCleanupJobs();
   registerHandoffHandlers();
+  registerGoogleSheetHandlers();
 }

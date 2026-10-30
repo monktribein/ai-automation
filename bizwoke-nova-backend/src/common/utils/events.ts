@@ -5,6 +5,7 @@ export interface DomainEvents {
   'appointment.created': { tenantId: string; appointmentId: string; status: string };
   'appointment.status_changed': { tenantId: string; appointmentId: string; from: string; to: string };
   'appointment.rescheduled': { tenantId: string; appointmentId: string };
+  'appointment.payment_changed': { tenantId: string; appointmentId: string; from: string; to: string };
   'lead.created': { tenantId: string; leadId: string };
   'conversation.handoff': { tenantId: string; sessionId: string; reason: string };
 }

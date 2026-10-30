@@ -92,6 +92,11 @@ const schema = z
     STORAGE_ACCESS_KEY: optionalString,
     STORAGE_SECRET_KEY: optionalString,
     STORAGE_FORCE_PATH_STYLE: bool(true),
+    /** Google Apps Script web app URL; when set, every booking is mirrored to the sheet. */
+    GOOGLE_SHEET_WEBHOOK_URL: optionalString,
+    /** Shared secret; must equal SECRET in the Apps Script. */
+    GOOGLE_SHEET_SECRET: optionalString,
+    GOOGLE_SHEET_NAME: z.string().default('Bookings'),
     EMAIL_PROVIDER: optionalEnum(['smtp']),
     SMTP_URL: optionalString,
     EMAIL_FROM: optionalString,
@@ -138,6 +143,12 @@ const schema = z
       issue('AK_NEXUS_WEBHOOK_SECRET', 'AK_NEXUS_WEBHOOK_SECRET must be at least 24 characters');
     if (e.AI_BASE_URL && !/^https:\/\//.test(e.AI_BASE_URL) && prodLike)
       issue('AI_BASE_URL', 'AI_BASE_URL must use https');
+    if (e.GOOGLE_SHEET_WEBHOOK_URL) {
+      if (!/^https:\/\/script\.google\.com\//.test(e.GOOGLE_SHEET_WEBHOOK_URL))
+        issue('GOOGLE_SHEET_WEBHOOK_URL', 'Must be an https://script.google.com/... web app URL');
+      if (!e.GOOGLE_SHEET_SECRET || e.GOOGLE_SHEET_SECRET.length < 16)
+        issue('GOOGLE_SHEET_SECRET', 'GOOGLE_SHEET_SECRET (min 16 chars) is required with GOOGLE_SHEET_WEBHOOK_URL');
+    }
     if (e.EMAIL_PROVIDER === 'smtp' && (!e.SMTP_URL || !e.EMAIL_FROM)) {
       issue('SMTP_URL', 'SMTP email requires SMTP_URL and EMAIL_FROM');
     }

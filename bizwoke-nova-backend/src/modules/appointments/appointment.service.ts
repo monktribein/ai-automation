@@ -25,6 +25,7 @@ import {
   type AppointmentDoc,
   type AppointmentSource,
   type AppointmentStatus,
+  type PaymentStatus,
 } from './appointment.models';
 
 const TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]> = {
@@ -51,6 +52,7 @@ export interface CreateAppointmentInput {
   customerId?: string;
   customer?: CustomerInput;
   customerNotes?: string;
+  paymentStatus?: PaymentStatus;
 }
 
 interface CreateOptions {
@@ -297,6 +299,7 @@ async function bookWithStaff(
           blockEndAt: blockEnd,
           timezone,
           status,
+          paymentStatus: input.paymentStatus ?? 'UNPAID',
           source: opts.source,
           seat,
           customerNotes: input.customerNotes,
@@ -420,6 +423,43 @@ export async function transition(
     tenantId: tenantId.toString(),
     appointmentId: id,
     from: current.status,
+    to,
+  });
+  return updated;
+}
+
+export async function setPaymentStatus(
+  ctx: TenantContext,
+  id: string,
+  to: PaymentStatus,
+): Promise<AppointmentDoc> {
+  const tenantId = ctx.tenantId;
+  const current = await repo(tenantId).getById(id, 'Appointment');
+  const from = current.paymentStatus ?? 'UNPAID';
+  if (from === to) return current;
+  const updated = await withTransaction(async (session) => {
+    const doc = await repo(tenantId).findOneAndUpdate(
+      { _id: id, paymentStatus: current.paymentStatus },
+      { $set: { paymentStatus: to } },
+      { session },
+    );
+    if (!doc) throw Errors.conflict('Appointment was modified concurrently, please retry');
+    await new TenantRepository(AppointmentEventModel, tenantId).create(
+      {
+        appointmentId: doc._id,
+        type: 'PAYMENT_UPDATED',
+        actorType: ctx.actor.type,
+        actorUserId: ctx.actor.userId ? new Types.ObjectId(ctx.actor.userId) : undefined,
+        data: { from, to },
+      },
+      session,
+    );
+    return doc;
+  });
+  events.emit('appointment.payment_changed', {
+    tenantId: tenantId.toString(),
+    appointmentId: id,
+    from,
     to,
   });
   return updated;

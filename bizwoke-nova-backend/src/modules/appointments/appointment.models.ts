@@ -20,6 +20,9 @@ export const ACTIVE_STATUSES: AppointmentStatus[] = [
   'CHECKED_IN',
 ];
 
+export const PAYMENT_STATUSES = ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'REFUNDED'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
 export type AppointmentSource = 'STAFF' | 'PUBLIC' | 'AI' | 'WHATSAPP' | 'IMPORT';
 
 export interface AppointmentDoc {
@@ -36,6 +39,7 @@ export interface AppointmentDoc {
   blockEndAt: Date;
   timezone: string;
   status: AppointmentStatus;
+  paymentStatus: PaymentStatus;
   source: AppointmentSource;
   seat: number;
   customerNotes?: string;
@@ -57,6 +61,7 @@ const schema = tenantSchema<AppointmentDoc>({
   blockEndAt: { type: Date, required: true },
   timezone: { type: String, required: true },
   status: { type: String, enum: APPOINTMENT_STATUSES, required: true },
+  paymentStatus: { type: String, enum: PAYMENT_STATUSES, default: 'UNPAID' },
   source: { type: String, enum: ['STAFF', 'PUBLIC', 'AI', 'WHATSAPP', 'IMPORT'], required: true },
   seat: { type: Number, default: 0, min: 0 },
   customerNotes: { type: String, maxlength: 500 },
@@ -77,7 +82,7 @@ export interface AppointmentEventDoc {
   _id: Types.ObjectId;
   tenantId: Types.ObjectId;
   appointmentId: Types.ObjectId;
-  type: 'CREATED' | 'STATUS_CHANGED' | 'RESCHEDULED' | 'NOTE';
+  type: 'CREATED' | 'STATUS_CHANGED' | 'RESCHEDULED' | 'PAYMENT_UPDATED' | 'NOTE';
   fromStatus?: AppointmentStatus;
   toStatus?: AppointmentStatus;
   actorType: string;
@@ -89,7 +94,11 @@ export interface AppointmentEventDoc {
 const eventSchema = tenantSchema<AppointmentEventDoc>(
   {
     appointmentId: { type: Schema.Types.ObjectId, ref: 'Appointment', required: true },
-    type: { type: String, enum: ['CREATED', 'STATUS_CHANGED', 'RESCHEDULED', 'NOTE'], required: true },
+    type: {
+      type: String,
+      enum: ['CREATED', 'STATUS_CHANGED', 'RESCHEDULED', 'PAYMENT_UPDATED', 'NOTE'],
+      required: true,
+    },
     fromStatus: { type: String, enum: APPOINTMENT_STATUSES },
     toStatus: { type: String, enum: APPOINTMENT_STATUSES },
     actorType: { type: String, required: true },

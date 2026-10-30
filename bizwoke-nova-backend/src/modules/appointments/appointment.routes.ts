@@ -13,7 +13,7 @@ import { getAvailableSlots } from '../availability/availability.service';
 import { customerBody } from '../customers/customer.routes';
 import { customerRepo } from '../customers/customer.service';
 import { UserModel } from '../users/user.model';
-import { APPOINTMENT_STATUSES, type AppointmentStatus } from './appointment.models';
+import { APPOINTMENT_STATUSES, PAYMENT_STATUSES, type AppointmentStatus } from './appointment.models';
 import * as appointments from './appointment.service';
 
 export const idempotencyKey = z
@@ -28,6 +28,7 @@ const createBody = z
     customerId: objectId.optional(),
     customer: customerBody.optional(),
     customerNotes: z.string().max(500).optional(),
+    paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   })
   .strict()
   .refine(
@@ -53,6 +54,7 @@ const statusBody = z
     reason: z.string().max(500).optional(),
   })
   .strict();
+const paymentBody = z.object({ paymentStatus: z.enum(PAYMENT_STATUSES) }).strict();
 const rescheduleBody = z.object({ startAt: isoDateTime, staffId: objectId.optional() }).strict();
 const slotsQuery = z
   .object({ serviceId: objectId, from: isoDate, to: isoDate.optional(), staffId: objectId.optional() })
@@ -164,6 +166,23 @@ export function appointmentRouter(): Router {
         resourceType: 'appointment',
         resourceId: a._id,
         metadata: { to: body.status },
+      });
+      ok(req, res, a);
+    },
+  );
+
+  r.patch(
+    '/:id/payment',
+    requirePermission(PERMISSIONS.APPOINTMENTS_WRITE),
+    validate({ params: idParam(), body: paymentBody }),
+    async (req, res) => {
+      const { params, body } = valid<{ id: string } & z.infer<typeof paymentBody>>(res);
+      const a = await appointments.setPaymentStatus(req.tenant!, params.id, body.paymentStatus);
+      await audit(originFromRequest(req), {
+        action: 'appointment.payment_update',
+        resourceType: 'appointment',
+        resourceId: a._id,
+        metadata: { to: body.paymentStatus },
       });
       ok(req, res, a);
     },

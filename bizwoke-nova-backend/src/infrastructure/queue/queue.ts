@@ -18,6 +18,7 @@ export const JOB_NAMES = [
   'export.generate',
   'import.process',
   'cleanup.expired',
+  'google-sheet.sync',
 ] as const;
 export type JobName = (typeof JOB_NAMES)[number];
 
